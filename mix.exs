@@ -6,7 +6,10 @@ defmodule Dynamo.MixProject do
       apps_path: "apps",
       version: "0.1.0",
       start_permanent: Mix.env() == :prod,
-      deps: deps()
+      deps: deps(),
+      dializer: [
+        plt_add_deps: :apps_direct
+      ]
     ]
   end
 
@@ -16,6 +19,10 @@ defmodule Dynamo.MixProject do
   #
   # Run "mix help deps" for examples and options.
   defp deps do
-    []
+    [
+      {:dialyxir, "~> 1.0", only: [:dev], runtime: false},
+      {:credo, "~> 1.4", only: [:dev, :test], runtime: false},
+      {:ex_doc, "~> 0.22", only: :dev, runtime: false}
+    ]
   end
 end
