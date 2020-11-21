@@ -17,7 +17,25 @@ defmodule RingTest do
     ring = Ring.new()
     assert Ring.get_node_count(ring) == 0
     tree = :gb_trees.empty
-    ring = Ring.add_nodes(ring, [:a])
+    ring = Ring.add_nodes(ring, [Ring.create_ring_node(:a)])
+    ring = Ring.add_nodes(ring, [Ring.create_ring_node(:b)])
+    assert Ring.get_node_count(ring) == 2
+    assert :gb_trees.size(ring.ring) == 256
+    result = Ring.nodes_for_key(ring, "foo", 2)
+  after
+    Emulation.terminate()
+  end
+
+  test "Test Remove Node" do
+    Emulation.init()
+    Emulation.append_fuzzers([Fuzzers.delay(2)])
+    ring = Ring.new()
+    assert Ring.get_node_count(ring) == 0
+    tree = :gb_trees.empty
+    ring = Ring.add_nodes(ring, [Ring.create_ring_node(:a), Ring.create_ring_node(:b)])
+    assert Ring.get_node_count(ring) == 2
+    ring = Ring.remove_node(ring, :a)
+    assert Ring.get_node_count(ring) == 1
   after
     Emulation.terminate()
   end
