@@ -18,7 +18,6 @@ defmodule RingTest do
     assert Ring.get_node_count(ring) == 0
     tree = :gb_trees.empty
     ring = Ring.add_nodes(ring, [:a])
-    assert Ring.get_node_count(ring) == 1
   after
     Emulation.terminate()
   end
