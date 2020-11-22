@@ -9,6 +9,7 @@ defmodule Ring.RingNode do
     data: nil
   )
 
+  @spec new(any) :: %RingNode{}
   def new(node) do
     %RingNode{key: node, data: %{}}
   end
