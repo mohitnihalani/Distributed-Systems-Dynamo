@@ -12,7 +12,8 @@ defmodule Ring do
   defstruct(
     ring: nil,
     nodes: nil,
-    virtual_nodes: 128  # Default Virutal Nodes of the server
+    virtual_nodes: 128,  # Default Virutal Nodes of the server,
+    version: nil
   )
 
   @hash_range trunc(:math.pow(2, 32) - 1)
@@ -102,8 +103,9 @@ defmodule Ring do
     end
   end
 
+
   @spec sync_rings(%Ring{}, %Ring{}) :: %Ring{}
-  def sync_rings(%Ring{ring: ring1, nodes: nodes1}, %Ring{ring: ring2, nodes: nodes2}) do
+  def sync_rings(%Ring{ring: ring1, nodes: nodes1, version: version1}, %Ring{ring: ring2, nodes: nodes2, version: version2}) do
     tree1 =:gb_trees.to_list(ring1)
     |> Enum.map(fn {key, value} -> {key, value} end)
     |> Enum.into(%{})
@@ -117,7 +119,10 @@ defmodule Ring do
     |> Map.to_list()
     |> :gb_trees.from_orddict()
 
-    %Ring{ring: tree, nodes: MapSet.union(nodes1, nodes2)}
+    # TODO
+    # Sync Version Vector
+    version = nil
+    %Ring{ring: tree, nodes: MapSet.union(nodes1, nodes2), version: version}
   end
   @spec get_nodes_list(%Ring{}) :: MapSet
   def get_nodes_list(%Ring{nodes: nodes}) do
