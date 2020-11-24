@@ -1,25 +1,37 @@
 defmodule DynamoNode.KV do
-  @moduledoc """
-  Response for RequestVote requests.
-  """
   alias __MODULE__
+
   defstruct(
-    db: Map
+    db: %{}
   )
 
   def new() do
-    %KV{db: Map.new()}
+    %KV{db: %{}}
   end
 
-  def put(key, context, value) do
+  @spec put(%KV{}, non_neg_integer(), any(), any(), any()) :: %KV{}
+  def put(kv, version, key, context, value) do
     #TODO
     # Put the given key
+    # Replace the current context of the sender in the vector clock with the correct version
+    # i.e if key = foo, value = 200, sender = :a, current_Version = 4, context = [(:a, 1)]
+    # then new put should be context = [(:a, 5)]
+    if Map.has_key?(kv.db, key) do
+      #TODO Update
+      kv
+    else
+      #TODO put new
+      kv
+    end
   end
 
-  def get(key) do
+  def get(kv, key) do
     #TODO
     # Return Key for the given value
+    Map.get(kv, key, :noentry)
+
   end
+
 end
 
 defmodule DynamoNode.Entry do
@@ -83,7 +95,7 @@ defmodule DynamoNode.PutEntryResponse do
   end
 end
 
-defmodule DynamoNode.GetEntryReply do
+defmodule DynamoNode.GetEntryResponse do
 
   @moduledoc """
   PutEntryReply by the replication node to the coordinator node.
@@ -97,9 +109,9 @@ defmodule DynamoNode.GetEntryReply do
     client: nil
   )
 
-  @spec new(atom(), %DynamoNode.Entry{}, atom()) :: %GetEntryReply{}
+  @spec new(atom(), %DynamoNode.Entry{}, atom()) :: %GetEntryResponse{}
   def new(client, entry, ack) do
-    %GetEntryReply{ack: ack, entry: entry, client: client}
+    %GetEntryResponse{ack: ack, entry: entry, client: client}
   end
 end
 
