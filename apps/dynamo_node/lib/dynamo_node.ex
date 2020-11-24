@@ -87,7 +87,7 @@ defmodule DynamoNode do
   """
   Method to run gossip protocol
   """
-  def run_gossip_protocol(node) do
+  def run_gossip_protocol(node, extra_state) do
     :rand.seed(:exrop, {101, 102, 103})
     random_node = Enum.random(node.state.nodes)
     send(random_node, {:share_state, node.state})
@@ -96,9 +96,9 @@ defmodule DynamoNode do
     receive do
       {_sender, {:share_state_reply, %Ring{} = joined_state}} ->
         node = %{node | state: join_states(node.state, joined_state)}
-        run_node(node)
+        run_node(node, extra_state)
       :timer ->
-        run_node(node)
+        run_node(node, extra_state)
     end
   end
 
@@ -112,20 +112,38 @@ defmodule DynamoNode do
   """
   This is where most recursion happend maintaing state
   """
-  defp run_node(node) do
+  defp run_node(node, extra_state) do
     receive do
       :timer ->
         run_gossip_protocol(node)
-      {sender, {:share_state, otherstate}} ->
+
+      # Share State Request For Gossip Protocol
+      {sender, %DynamoNode.ShareStateRequest{state: otherstate}} ->
         node = %{node | state: handle_share_state_request(node.state, {sender, otherstate})}
-        run_node(node)
+        run_node(node, extra_state)
         # code
+
+      {sender, %DynamoNode.PutEntryRequest{}} ->
+        # Handle Put Entry for replication
+        #TODO
+        run_node(node, extra_state)
+
+      {sender, %DynamoNode.PutEntryResponse{}} ->
+        # Handle Put Entry for response for the replication
+        #TODO
+        run_node(node, extra_state)
+
+      # ---------------  Handle Client Request -----------------------------#
+
+      # Put Request for the client
       {sender, {:put, {key, value, context}}} ->
         #TODO Put given key, with this value and context
-        run_node(node)
-      {sender, {:share_state, otherstate}} ->
-        #TODO Get given key, with this value and context
-        run_node(node)
+        run_node(node, extra_state)
+
+      # Get Request for the client
+      {sender, {:get, key}} ->
+        #TODO Handle Client Request
+        run_node(node, extra_state)
     end
 
   end

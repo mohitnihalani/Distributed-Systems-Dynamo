@@ -1,4 +1,4 @@
-defmodule Raft.KV do
+defmodule DynamoNode.KV do
   @moduledoc """
   Response for RequestVote requests.
   """
@@ -22,7 +22,7 @@ defmodule Raft.KV do
   end
 end
 
-defmodule Raft.Entry do
+defmodule DynamoNode.Entry do
   @moduledoc """
   Key Value Pair Message
   """
@@ -44,7 +44,7 @@ defmodule Raft.Entry do
   end
 end
 
-defmodule Raft.PutEntryRequest do
+defmodule DynamoNode.PutEntryRequest do
 
   @moduledoc """
   PutEntryReuest to replicate key value request to other nodes
@@ -64,7 +64,7 @@ defmodule Raft.PutEntryRequest do
   end
 end
 
-defmodule Raft.PutEntryReply do
+defmodule DynamoNode.PutEntryResponse do
 
   @moduledoc """
   PutEntryReply by the replication node to the coordinator node.
@@ -79,30 +79,31 @@ defmodule Raft.PutEntryReply do
   )
 
   def new(key, value, ack) do
-    %PutEntryReply{ack: ack, value: value, key: key}
+    %PutEntryResponse{ack: ack, value: value, key: key}
   end
 end
 
-defmodule Raft.GetEntryReply do
+defmodule DynamoNode.GetEntryReply do
 
   @moduledoc """
   PutEntryReply by the replication node to the coordinator node.
   """
   alias __MODULE__
 
-  @enforce_keys [:key, :value, :ack]
+  @enforce_keys [:client, :entry, :ack]
   defstruct(
     ack: nil, # :ok
-    value: nil,
-    key: nil
+    entry: nil,
+    client: nil
   )
 
-  def new(key, value, ack) do
-    %GetEntryReply{ack: ack, value: value, key: key}
+  @spec new(atom(), %DynamoNode.Entry{}, atom()) :: %GetEntryReply{}
+  def new(client, entry, ack) do
+    %GetEntryReply{ack: ack, entry: entry, client: client}
   end
 end
 
-defmodule Raft.GetEntryRequest do
+defmodule DynamoNode.GetEntryRequest do
   alias __MODULE__
 
   @moduledoc """
@@ -119,7 +120,7 @@ defmodule Raft.GetEntryRequest do
   end
 end
 
-defmodule Raft.ShareStateRequest do
+defmodule DynamoNode.ShareStateRequest do
 
   @moduledoc """
   Share State Request. Useful for gossip protocol.
@@ -139,7 +140,7 @@ defmodule Raft.ShareStateRequest do
   end
 end
 
-defmodule Raft.ShareStateResponse do
+defmodule DynamoNode.ShareStateResponse do
 
   @moduledoc """
   Share State Response. To be used for gossip protocol
