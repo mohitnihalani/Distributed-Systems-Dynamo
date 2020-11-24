@@ -30,7 +30,10 @@ defmodule DynamoNode do
     pid: nil,
     heartbeat_timer: nil,
     seed_node: nil,
-    heartbeat_timeout: 1000
+    heartbeat_timeout: 1000,
+    N: 3, # (N,R,W) for quorum
+    R: 2,
+    W: 1,
   )
 
 
