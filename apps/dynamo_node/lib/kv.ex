@@ -24,7 +24,7 @@ end
 
 defmodule Raft.Entry do
   @moduledoc """
-  Response for RequestVote requests.
+  Key Value Pair Message
   """
   alias __MODULE__
 
@@ -44,9 +44,12 @@ defmodule Raft.Entry do
   end
 end
 
-defmodule Raft.PutEntry do
-  alias __MODULE__
+defmodule Raft.PutEntryRequest do
 
+  @moduledoc """
+  PutEntryReuest to replicate key value request to other nodes
+  This is intiated by the corrdinator node
+  """
   alias __MODULE__
 
   @enforce_keys [:context, :key, :value]
@@ -57,21 +60,100 @@ defmodule Raft.PutEntry do
   )
 
   def new(key, context, value) do
-    %PutEntry{context: context, value: value, key: key}
+    %PutEntryRequest{context: context, value: value, key: key}
   end
 end
 
-defmodule Raft.GetEntry do
+defmodule Raft.PutEntryReply do
+
+  @moduledoc """
+  PutEntryReply by the replication node to the coordinator node.
+  """
   alias __MODULE__
 
+  @enforce_keys [:key, :value, :ack]
+  defstruct(
+    ack: nil, # :ok
+    value: nil,
+    key: nil
+  )
+
+  def new(key, value, ack) do
+    %PutEntryReply{ack: ack, value: value, key: key}
+  end
+end
+
+defmodule Raft.GetEntryReply do
+
+  @moduledoc """
+  PutEntryReply by the replication node to the coordinator node.
+  """
   alias __MODULE__
 
+  @enforce_keys [:key, :value, :ack]
+  defstruct(
+    ack: nil, # :ok
+    value: nil,
+    key: nil
+  )
+
+  def new(key, value, ack) do
+    %GetEntryReply{ack: ack, value: value, key: key}
+  end
+end
+
+defmodule Raft.GetEntryRequest do
+  alias __MODULE__
+
+  @moduledoc """
+    Get entry request to get value from the replicated nodes.
+    This is intiated by the coordinator node for quorum based protocol.
+  """
   @enforce_keys [:key]
   defstruct(
     key: nil
   )
 
   def new(key) do
-    %GetEntry{key: key}
+    %GetEntryRequest{key: key}
+  end
+end
+
+defmodule Raft.ShareStateRequest do
+
+  @moduledoc """
+  Share State Request. Useful for gossip protocol.
+  This shoudl share a ring.
+  """
+
+  alias __MODULE__
+
+  @enforce_keys [:state]
+  defstruct(
+    state: nil
+  )
+
+  @spec new(%Ring{}) :: %ShareStateRequest{}
+  def new(state) do
+    %ShareStateRequest{state: state}
+  end
+end
+
+defmodule Raft.ShareStateResponse do
+
+  @moduledoc """
+  Share State Response. To be used for gossip protocol
+  """
+
+  alias __MODULE__
+
+  @enforce_keys [:state]
+  defstruct(
+    state: nil
+  )
+
+  @spec new(%Ring{}) :: %ShareStateResponse{}
+  def new(state) do
+    %ShareStateResponse{state: state}
   end
 end
