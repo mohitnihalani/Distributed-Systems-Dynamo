@@ -14,43 +14,75 @@ defmodule DynamoNodeTest do
 
     spawn(:a, fn -> DynamoNode.lauch_node(DynamoNode.init()) end)
     spawn(:b, fn -> DynamoNode.lauch_node(DynamoNode.init()) end)
-    spawn(:c, fn -> DynamoNode.lauch_node(DynamoNode.init()) end)
-    spawn(:d, fn -> DynamoNode.lauch_node(DynamoNode.init()) end)
 
-    caller = self()
+
     client = spawn(:c1, fn ->
-      client = DynamNode.Client.new_client(:c1)
-      assert DynamNode.Client.check_node_status(client, :a) == :ok
-      assert DynamNode.Client.check_node_status(client, :b) == :ok
-      assert DynamNode.Client.check_node_status(client, :c) == :ok
-      assert DynamNode.Client.check_node_status(client, :d) == :ok
+      client = DynamoNode.Client.new_client(:c1)
+      assert DynamoNode.Client.check_node_status(client, :a) == {:ok, client}
+      assert DynamoNode.Client.check_node_status(client, :b) == {:ok, client}
     end)
+
+    handle = Process.monitor(client)
+    # Timeout.
+    receive do
+      {:DOWN, ^handle, _, _, _} -> true
+    after
+      30_000 -> assert false
+    end
   after
     Emulation.terminate()
   end
+
+
 
   test "Test Gossip State Sharing" do
     Emulation.init()
     Emulation.append_fuzzers([Fuzzers.delay(2)])
 
     spawn(:a, fn -> DynamoNode.lauch_node(DynamoNode.init()) end)
-    spawn(:b, fn -> DynamoNode.lauch_node(DynamoNode.init()) end)
+    spawn(:b, fn -> DynamoNode.lauch_node(DynamoNode.init(:a)) end)
+    spawn(:c, fn -> DynamoNode.lauch_node(DynamoNode.init(:b)) end)
+    spawn(:d, fn -> DynamoNode.lauch_node(DynamoNode.init(:c)) end)
 
     caller = self()
     client = spawn(:c1, fn ->
-      client = DynamNode.Client.new_client(:c1)
-      assert DynamNode.Client.check_node_status(client, :a) == :ok
-      assert DynamNode.Client.check_node_status(client, :b) == :ok
+      client = DynamoNode.Client.new_client(:c1)
+      assert DynamoNode.Client.check_node_status(client, :a) == {:ok, client}
+      assert DynamoNode.Client.check_node_status(client, :b) == {:ok, client}
+      assert DynamoNode.Client.check_node_status(client, :c) == {:ok, client}
+      assert DynamoNode.Client.check_node_status(client, :d) == {:ok, client}
 
        # Give things a bit of time to settle down.
        receive do
        after
-         2_000 -> :ok
+         3_000 -> :ok
        end
 
-       node_ring = Dynamo.Client.client_get_state(client, :b)
-       assert Ring.get_node_count(node_ring) == 2
+      #{node_ring, ^client} = DynamoNode.Client.client_get_state(client, :d)
+      #assert MapSet.equal?(MapSet.new([:a, :b, :c, :d]), Ring.get_nodes_list(node_ring)) == true
+
+       {node_ring, ^client} = DynamoNode.Client.client_get_state(client, :a)
+       assert Ring.get_node_count(node_ring) == 4
+
+       {node_ring, ^client} = DynamoNode.Client.client_get_state(client, :b)
+       assert Ring.get_node_count(node_ring) == 4
+
+       {node_ring, ^client} = DynamoNode.Client.client_get_state(client, :c)
+       assert Ring.get_node_count(node_ring) == 4
+
+       {node_ring, ^client} = DynamoNode.Client.client_get_state(client, :d)
+       assert Ring.get_node_count(node_ring) == 4
+
     end)
+
+    handle = Process.monitor(client)
+    # Timeout.
+    receive do
+      {:DOWN, ^handle, _, _, _} -> true
+    after
+      30_000 -> assert false
+    end
+
   after
     Emulation.terminate()
   end

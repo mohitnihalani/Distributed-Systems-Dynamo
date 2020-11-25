@@ -93,28 +93,41 @@ defmodule DynamoNode do
   Method to run gossip protocol
   """
   def run_gossip_protocol(node, extra_state) do
-    :rand.seed(:exrop, {101, 102, 103})
-    random_node = Enum.random(node.state.nodes)
-    send(random_node,DynamoNode.ShareStateResponse.new(node.state))
-    timeout = Emulation.timer(200)
-    IO.puts("#{whoami()} Initiated Gossip Protocl Request to #{node}")
+    #:rand.seed(:exrop, {101, 102, 103})
+    # Filter Current Node from the list
 
-    receive do
+    node_list = Enum.filter(node.state.nodes, fn x -> x != whoami() end)
+    if Enum.count(node_list) <= 0 do
+      node = reset_gossip_timeout(node)
+      run_node(node, extra_state)
+    else
+      random_node = Enum.random(node_list)
 
+      IO.puts("#{whoami()} (#{Enum.count(node_list)}) Initiated Gossip Protocl Request to #{random_node}")
+      """
+      for x <- node_list do
+        IO.puts(x)
+      end
+      """
+      send(random_node,DynamoNode.ShareStateRequest.new(node.state))
+      timeout = Emulation.timer(500)
+      receive do
+        {^random_node, %DynamoNode.ShareStateResponse{
+          state: otherstate
+        }} ->
+          IO.puts("#{whoami()} Received Share State Response from #{random_node}
+          <> #{whoami()} has #{Ring.get_node_count(node.state)} and #{random_node} have #{Ring.get_node_count(otherstate)}")
+          node = %{node | state: join_states(node.state, otherstate)}
+          Emulation.cancel_timer(timeout)
+          node = reset_gossip_timeout(node)
+          run_node(node, extra_state)
 
-      {^node, %DynamoNode.ShareStateRequest{
-        state: state
-      }} ->
-        IO.puts("#{whoami()} Received Share State Response from #{node}")
-        #node = %{node | state: join_states(node.state, otherstate)}
-        Emulation.cancel_timer(timeout)
-        node = reset_gossip_timeout(node)
-        run_node(node, extra_state)
+        :timer ->
+          IO.puts("#{whoami()} Gossip Protocol Request Timeout #{random_node}")
+          run_node(node, extra_state)
+          node = reset_gossip_timeout(node)
+      end
 
-      :timer ->
-        IO.puts("#{whoami()} Gossip Protocol Request Timeout #{node}")
-        run_node(node, extra_state)
-        node = reset_gossip_timeout(node)
     end
   end
 
@@ -150,6 +163,7 @@ defmodule DynamoNode do
 
   @spec lauch_node(%DynamoNode{}) :: no_return()
   def lauch_node(node) do
+    IO.puts("Launching node #{whoami()}")
     node = reset_gossip_timeout(node)
     IO.puts(Ring.get_node_count(node.state))
     run_node(node, %{})
@@ -159,10 +173,11 @@ defmodule DynamoNode do
   This is where most recursion happend maintaing state
   """
   defp run_node(node, extra_state) do
-    IO.puts("Running Node  #{whoami()}")
+    #IO.puts("Running Node  #{whoami()}")
     receive do
 
       :timer ->
+
         if Ring.get_node_count(node.state) >= 2 do
           run_gossip_protocol(node, extra_state)
         else
@@ -171,7 +186,7 @@ defmodule DynamoNode do
 
       # Share State Request For Gossip Protocol
       {sender, %DynamoNode.ShareStateRequest{state: otherstate}} ->
-        IO.puts("#{whoami()} Rreceived Share State request from #{sender}")
+        IO.puts("#{whoami()} (#{Ring.get_node_count(node.state)}) Received Share State request from #{sender} (#{Ring.get_node_count(otherstate)})")
 
         node = %{node | state: handle_share_state_request(node.state, {sender, otherstate})}
         run_node(node, extra_state)
@@ -226,8 +241,9 @@ defmodule DynamoNode do
 
       # --------------- Testing ---------------------------------------- #
       {sender, :check} ->
+
         #IO.puts(sender)
-        #send(sender, :ok)
+        send(sender, :ok)
         run_node(node, extra_state)
 
       {sender, :get_state} ->
@@ -266,6 +282,7 @@ defmodule DynamoNode.Client do
   end
 
   def client_get_state(client, node) do
+    IO.puts("Getting State for #{node}")
     send(node, :get_state)
     receive do
       {^node, state} -> {state,client}
