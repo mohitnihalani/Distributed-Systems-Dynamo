@@ -1,24 +1,22 @@
 defmodule DynamoNode.Entry do
   @moduledoc """
-  Key Value Pair Message
+  Response for RequestVote requests.
   """
   alias __MODULE__
-
   @enforce_keys [:context, :key, :value]
   defstruct(
     context: nil, # Vector Clock
     value: nil,
     key: nil
   )
-
   @doc """
   Create a new RequestVoteResponse.
   """
-  #@spec new(key, context, value) :: %Entry{}
   def new(key, context, value) do
     %Entry{context: context, value: value, key: key}
   end
 end
+
 
 defmodule DynamoNode.KV do
   alias __MODULE__
@@ -108,8 +106,6 @@ defmodule DynamoNode.GetEntryResponse do
     entry: nil,
     client: nil
   )
-
-  @spec new(atom(), %DynamoNode.Entry{}, atom()) :: %GetEntryResponse{}
   def new(client, entry, ack) do
     %GetEntryResponse{ack: ack, entry: entry, client: client}
   end
@@ -165,7 +161,7 @@ defmodule DynamoNode.ShareStateResponse do
     state: nil
   )
 
-  @spec new(%Ring{}) :: %ShareStateResponse{}
+  @spec new(%Ring{}) :: %ShareStateResponse{state: %Ring{}}
   def new(state) do
     %ShareStateResponse{state: state}
   end
