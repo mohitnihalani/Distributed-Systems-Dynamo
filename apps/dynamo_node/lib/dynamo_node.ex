@@ -32,9 +32,10 @@ defmodule DynamoNode do
     heartbeat_timer: nil,
     heartbeat_timeout: 1000,
     seed_node: nil,
-    N: 3, # (N,R,W) for quorum
-    R: 2,
-    W: 1,
+    n: 3, # (N,R,W) for quorum
+    r: 2,
+    w: 1,
+    version: 0
   )
 
 
@@ -106,6 +107,36 @@ defmodule DynamoNode do
     end
   end
 
+  @spec get_preference_list(%Ring{}, any(), non_neg_integer()) :: [atom()]
+  def get_preference_list(ring, key, n) do
+    Ring.nodes_for_key(ring, key, n)
+  end
+
+  def send_requests(node_list, message) do
+    Enum.map(node_list, fn pid -> send(pid, message) end)
+  end
+
+
+  def handle_put_request(node, extra_state, client, key, value, context) do
+    preference_list = get_preference_list(node.state, key, node)
+    pid = whoami()
+    case preference_list do
+      [^pid | tail]->
+        # If Coordinator Node, store and send to other nodes
+        node = %{node | kv: DynamoNode.KV.put(node.kv, node.version, key, context, value)}
+        send_requests(tail, DynamoNode.PutEntryRequest.new(key, context, value))
+        {node, extra_state}
+      [head | tail]->
+        # If not, send the the preferred node for the given key
+        send(head, {:redirect_put, {client, key, value, context}})
+        {node, extra_state}
+      _ ->
+        # I don't know about this
+        {node, extra_state}
+    end
+  end
+
+
   @spec lauch_node(%DynamoNode{}) :: no_return()
   def lauch_node(node) do
     node = reset_gossip_timeout(node)
@@ -150,11 +181,25 @@ defmodule DynamoNode do
         #TODO
         run_node(node, extra_state)
 
+      # ---------------  Handle Redirect Client Request -----------------------------#
+
+      # Put Request for the client
+      {sender, {:redirect_put, {client, key, value, context}}} ->
+        # TODO Put given key, with this value and context
+        # First Check If you are the preferred coordinator
+        run_node(node, extra_state)
+
+      # Get Request for the client
+      {sender, {:redirect_get, {client, key}}} ->
+        #TODO Handle Client Request
+        run_node(node, extra_state)
+
       # ---------------  Handle Client Request -----------------------------#
 
       # Put Request for the client
       {sender, {:put, {key, value, context}}} ->
-        #TODO Put given key, with this value and context
+        # TODO Put given key, with this value and context
+        # First Check If you are the preferred coordinator
         run_node(node, extra_state)
 
       # Get Request for the client
@@ -193,13 +238,22 @@ defmodule DynamNode.Client do
     %Client{client_id: client_id}
   end
 
-  @spec check_node_status(%Client{}, atom()) :: :fail | :ok
+  @spec check_node_status(%Client{}, atom()) :: {:fail,%Client{}} | {:ok,%Client{}}
   def check_node_status(client, node) do
     send(node, :check)
     receive do
-      {^node, :ok} -> :ok
+      {^node, :ok} -> {:ok,client}
     after
-      1000 -> :fail
+      1000 -> {:fail,client}
     end
+  end
+
+  @spec put_request(%Client{}, any(), any(), any(), atom()) :: {:ok, %Client{}}
+  def put_request(client, key, value, context, node) do
+    send(node, {:put, {key, value, context}})
+  end
+
+  def get(client, key, node) do
+
   end
 end

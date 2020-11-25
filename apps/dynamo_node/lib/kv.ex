@@ -1,39 +1,3 @@
-defmodule DynamoNode.KV do
-  alias __MODULE__
-
-  defstruct(
-    db: %{}
-  )
-
-  def new() do
-    %KV{db: %{}}
-  end
-
-  @spec put(%KV{}, non_neg_integer(), any(), any(), any()) :: %KV{}
-  def put(kv, version, key, context, value) do
-    #TODO
-    # Put the given key
-    # Replace the current context of the sender in the vector clock with the correct version
-    # i.e if key = foo, value = 200, sender = :a, current_Version = 4, context = [(:a, 1)]
-    # then new put should be context = [(:a, 5)]
-    if Map.has_key?(kv.db, key) do
-      #TODO Update
-      kv
-    else
-      #TODO put new
-      kv
-    end
-  end
-
-  def get(kv, key) do
-    #TODO
-    # Return Key for the given value
-    Map.get(kv, key, :noentry)
-
-  end
-
-end
-
 defmodule DynamoNode.Entry do
   @moduledoc """
   Key Value Pair Message
@@ -53,6 +17,42 @@ defmodule DynamoNode.Entry do
   #@spec new(key, context, value) :: %Entry{}
   def new(key, context, value) do
     %Entry{context: context, value: value, key: key}
+  end
+end
+
+defmodule DynamoNode.KV do
+  alias __MODULE__
+
+  defstruct(
+    db: %{}
+  )
+
+  def new() do
+    %KV{db: %{}}
+  end
+
+  @spec put(%KV{}, non_neg_integer(), any(), any(), any()) :: %KV{}
+  def put(kv, version, key, context, value) do
+    #TODO
+    # Put the given key
+    # Replace the current context of the sender in the vector clock with the correct version
+    # i.e if key = foo, value = 200, sender = :a, current_Version = 4, context = [(:a, 1)]
+    # then new put should be context = [(:a, 5)]
+    if Map.has_key?(kv.db, key) do
+      #TODO Update Context Using Vector Clock
+      entry = Map.get(kv.db, key)
+      %{kv | db: Map.put(kv.db, key, %{entry | value: value, context: context})}
+    else
+      #TODO put new
+      entry = DynamoNode.Entry.new(key, context, value)
+      %{kv | db: Map.put_new(kv.db, key, entry)}
+    end
+  end
+
+  def get(kv, key) do
+    #TODO
+    # Return Key for the given value
+    Map.get(kv, key, :noentry)
   end
 end
 
