@@ -102,14 +102,15 @@ defmodule DynamoNode.GetEntryResponse do
   """
   alias __MODULE__
 
-  @enforce_keys [:client, :entry]
+  @enforce_keys [:client, :entry, :key]
   defstruct(
     ack: nil,
     entry: nil,
-    client: nil
+    client: nil,
+    key: nil
   )
-  def new(client, entry) do
-    %GetEntryResponse{entry: entry, client: client}
+  def new(client, entry, key) do
+    %GetEntryResponse{entry: entry, client: client, key: key}
   end
 end
 

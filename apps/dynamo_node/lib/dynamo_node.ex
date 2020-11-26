@@ -171,7 +171,7 @@ defmodule DynamoNode do
         send(client, {merged_values, merged_context})
         {node,  Map.delete(extra_state, client)}
       else
-        extra_state = Map.put(extra_state, [entry | Map.get(extra_state, client, [])])
+        extra_state = Map.put(extra_state, client, [entry | Map.get(extra_state, client, [])])
         {node, extra_state}
       end
     else
@@ -224,7 +224,7 @@ defmodule DynamoNode do
       case preference_list do
         [^pid | tail]->
           # I am the coordinator node, get from the database and ask other nodes
-          entry = DynamoNode.KV.get(kv, key)
+          entry = DynamoNode.KV.get(node.kv, key)
           case entry do
             %DynamoNode.Entry{key: ^key} ->
               send_requests(tail, DynamoNode.GetEntry.new(key, client))
@@ -277,7 +277,7 @@ defmodule DynamoNode do
         run_node(node, extra_state)
         # code
 
-      {sender, %DynamoNode.GetEntry{}} ->
+      {sender, %DynamoNode.GetEntry{key: key}} ->
         IO.puts("(#{whoami()}) received Get Entry Request from (#{sender}) <> #{key}")
         # Handle  GetEntry for replication
         # TODO
@@ -285,7 +285,8 @@ defmodule DynamoNode do
 
       {sender, %DynamoNode.GetEntryResponse{
         client: client,
-        entry: entry
+        entry: entry,
+        key: key
       }} ->
         # Handle  GetEntry Response
         # Merge the context and send response to the client

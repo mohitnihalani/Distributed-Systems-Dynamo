@@ -7,7 +7,7 @@ defmodule DynamoNodeTest do
   import Kernel,
     except: [spawn: 3, spawn: 1, spawn_link: 1, spawn_link: 3, send: 2]
 
-  """
+
   test "Check Node Creation" do
     Emulation.init()
     Emulation.append_fuzzers([Fuzzers.delay(2)])
@@ -84,7 +84,6 @@ defmodule DynamoNodeTest do
     Emulation.terminate()
   end
 
-  """
   test "Test Put Request" do
     Emulation.init()
     Emulation.append_fuzzers([Fuzzers.delay(2)])
