@@ -22,6 +22,7 @@ defmodule DynamoNode do
   # TODO -> Moving version inside the ring so we can have one state which consists on the ring and vector clock for the node
   # It would be easier to merge states, as we can only pass the ring when calling :share_state
 
+  # TODO -> If node is added also transfer k,v pairs
   # Token Calls
   # :share_state -> for share state request
   # :get
@@ -115,7 +116,7 @@ defmodule DynamoNode do
         {^random_node, %DynamoNode.ShareStateResponse{
           state: otherstate
         }} ->
-          IO.puts("#{whoami()} Received Share State Response from #{random_node}
+          IO.puts("(#{whoami()}) Received Share State Response from (#{random_node})
           <> #{whoami()} has #{Ring.get_node_count(node.state)} and #{random_node} have #{Ring.get_node_count(otherstate)}")
           node = %{node | state: join_states(node.state, otherstate)}
           Emulation.cancel_timer(timeout)
@@ -123,7 +124,7 @@ defmodule DynamoNode do
           run_node(node, extra_state)
 
         :timer ->
-          IO.puts("#{whoami()} Gossip Protocol Request Timeout #{random_node}")
+          IO.puts("(#{whoami()}) Gossip Protocol Request Timeout #{random_node}")
           run_node(node, extra_state)
           node = reset_gossip_timeout(node)
       end
@@ -140,18 +141,69 @@ defmodule DynamoNode do
     Enum.map(node_list, fn pid -> send(pid, message) end)
   end
 
+  def check_quorum_write(node, extra_state, client) do
+    IO.puts("Check if write received #{Map.fetch!(extra_state, client)}")
+    if Map.has_key?(extra_state, client) do
+      # Check If "W" acknowledgement is received
 
-  def handle_put_request(node, extra_state, client, key, value, context) do
-    preference_list = get_preference_list(node.state, key, node)
+      if Map.fetch!(extra_state, client) + 1 >= node.w do
+        send(client, :ok)
+        {node,  Map.delete(extra_state, client)}
+      else
+        extra_state = Map.put(extra_state, client, Map.fetch!(extra_state, client) + 1)
+        {node, extra_state}
+      end
+    else
+      # Probably already send the acknowledgement
+      {node, extra_state}
+    end
+  end
+
+  def merge_conflicting_version(versions) do
+    # TODO Merge Context
+  end
+
+  def check_quorum_read(node, extra_state, client, entry) do
+    if Map.has_key?(extra_state, client) do
+      if Enum.count(Map.get(extra_state, client, []) + 1 >= node.r) do
+        # TODO Merge Context
+        {merged_values, merged_context} = merge_conflicting_version(Map.get(extra_state, client))
+        send(client, {merged_values, merged_context})
+        {node,  Map.delete(extra_state, client)}
+      else
+        extra_state = Map.put(extra_state, [entry | Map.get(extra_state, client, [])])
+        {node, extra_state}
+      end
+    else
+      # Probably already send the acknowledgement
+      {node, extra_state}
+    end
+  end
+
+  def add_entry_to_db(node, key, context, value) do
+    #TODO Add vector clocks to add the version
+    %{node | kv: DynamoNode.KV.put(node.kv, node.version, key, context, value)}
+  end
+
+  """
+  Method to handle put request
+  """
+  defp handle_put_request(node, extra_state, client, key, value, context) do
+    # Get the preferred list
+    preference_list = get_preference_list(node.state, key, node.n)
+    Enum.each(preference_list, fn node -> IO.puts(node) end)
     pid = whoami()
     case preference_list do
       [^pid | tail]->
         # If Coordinator Node, store and send to other nodes
-        node = %{node | kv: DynamoNode.KV.put(node.kv, node.version, key, context, value)}
-        send_requests(tail, DynamoNode.PutEntryRequest.new(key, context, value))
-        {node, extra_state}
+        node = add_entry_to_db(node, key, context, value)
+        send_requests(tail, DynamoNode.PutEntry.new(key, context, value, client))
+        # Store into extra state to check if received "W Quorum Request"
+        extra_state = Map.put_new(extra_state, client, 0)
+        check_quorum_write(node, extra_state, client)
       [head | tail]->
         # If not, send the the preferred node for the given key
+        IO.puts("#{whoami} Redirecting Put Request for key <> #{key} to #{head}")
         send(head, {:redirect_put, {client, key, value, context}})
         {node, extra_state}
       _ ->
@@ -160,6 +212,39 @@ defmodule DynamoNode do
     end
   end
 
+  """
+  Handling get request
+  """
+  defp handle_get_request(node, extra_state, client, key) do
+      # Get the preferred list
+      preference_list = get_preference_list(node.state, key, node.n)
+      Enum.each(preference_list, fn node -> IO.puts(node) end)
+      pid = whoami()
+
+      case preference_list do
+        [^pid | tail]->
+          # I am the coordinator node, get from the database and ask other nodes
+          entry = DynamoNode.KV.get(kv, key)
+          case entry do
+            %DynamoNode.Entry{key: ^key} ->
+              send_requests(tail, DynamoNode.GetEntry.new(key, client))
+              # This is needed for "R = 1".
+              check_quorum_read(node, extra_state, client, Map.put(extra_state, key, [entry]))
+              {node, extra_state}
+            true ->
+              #TODO Think about what to do if the entry is not present in the db
+              {node, extra_state}
+          end
+        [head | tail] ->
+          IO.puts("#{whoami} Redirecting Get Request for key <> #{key} to #{head}")
+          send(head, {:redirect_get, {client, key}})
+          {node, extra_state}
+          # I am not the coordinator send to the appropriate node
+        _ ->
+          # I don't know about this
+          {node, extra_state}
+      end
+  end
 
   @spec lauch_node(%DynamoNode{}) :: no_return()
   def lauch_node(node) do
@@ -192,33 +277,56 @@ defmodule DynamoNode do
         run_node(node, extra_state)
         # code
 
-      {sender, %DynamoNode.GetEntryRequest{}} ->
+      {sender, %DynamoNode.GetEntry{}} ->
+        IO.puts("(#{whoami()}) received Get Entry Request from (#{sender}) <> #{key}")
         # Handle  GetEntry for replication
         # TODO
         run_node(node, extra_state)
 
-      {sender, %DynamoNode.GetEntryResponse{}} ->
+      {sender, %DynamoNode.GetEntryResponse{
+        client: client,
+        entry: entry
+      }} ->
         # Handle  GetEntry Response
         # Merge the context and send response to the client
         # TODO
+        IO.puts("(#{whoami()}) received Get Entry Response from (#{sender}) <> #{key}")
+        {node, extra_state} = check_quorum_read(node, extra_state, client, entry)
         run_node(node, extra_state)
 
-      {sender, %DynamoNode.PutEntryRequest{}} ->
+      {sender, %DynamoNode.PutEntry{
+        context: context,
+        value: value,
+        key: key,
+        client: client
+      }} ->
+
+        IO.puts("(#{whoami()}) received Put Entry Request from (#{sender}) <> #{key}")
         # Handle Put Entry for replication
         #TODO
+        node = add_entry_to_db(node, key, context, value)
+        send(sender, DynamoNode.PutEntryResponse.new(key, :ok, client))
         run_node(node, extra_state)
 
-      {sender, %DynamoNode.PutEntryResponse{}} ->
+      # Put Entry Response from the other node
+      {sender, %DynamoNode.PutEntryResponse{ack: ack, key: key, client: client}} ->
         # Handle Put Entry for response for the replication
         #TODO
-        run_node(node, extra_state)
+
+        IO.puts("(#{whoami()}) received Put Entry Response from (#{sender}) <> #{key}")
+        {node, extra_state} = check_quorum_write(node, extra_state, client)
 
       # ---------------  Handle Redirect Client Request -----------------------------#
 
       # Put Request for the client
+      # If request received by the node is not the coordinator node
+      # It will redirect request to the appropriate client
       {sender, {:redirect_put, {client, key, value, context}}} ->
         # TODO Put given key, with this value and context
         # First Check If you are the preferred coordinator
+        IO.puts("#{whoami} Received redirected put Request for key: #{key}")
+        #client, key, value, context
+        {node, extra_state} = handle_put_request(node, extra_state, client, key, value, context)
         run_node(node, extra_state)
 
       # Get Request for the client
@@ -232,6 +340,7 @@ defmodule DynamoNode do
       {sender, {:put, {key, value, context}}} ->
         # TODO Put given key, with this value and context
         # First Check If you are the preferred coordinator
+        {node, extra_state} = handle_put_request(node, extra_state, sender, key, value, context)
         run_node(node, extra_state)
 
       # Get Request for the client
@@ -291,9 +400,16 @@ defmodule DynamoNode.Client do
     end
   end
 
-  @spec put_request(%Client{}, any(), any(), any(), atom()) :: {:ok, %Client{}}
+  @spec put_request(%Client{}, any(), any(), any(), atom()) :: {:ok | :fail, %Client{}}
   def put_request(client, key, value, context, node) do
     send(node, {:put, {key, value, context}})
+
+    receive do
+      {_sender, :ok} -> {:ok, client}
+    after
+      1000 -> {:fail,client}
+    end
+
   end
 
   def get(client, key, node) do

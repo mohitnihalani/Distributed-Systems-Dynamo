@@ -47,14 +47,15 @@ defmodule DynamoNode.KV do
     end
   end
 
+  @spec get(%DynamoNode.KV{db: Map}, any()) :: %DynamoNode.Entry{} | :noentry
   def get(kv, key) do
     #TODO
     # Return Key for the given value
-    Map.get(kv, key, :noentry)
+    Map.get(kv.db, key, :noentry)
   end
 end
 
-defmodule DynamoNode.PutEntryRequest do
+defmodule DynamoNode.PutEntry do
 
   @moduledoc """
   PutEntryReuest to replicate key value request to other nodes
@@ -62,15 +63,16 @@ defmodule DynamoNode.PutEntryRequest do
   """
   alias __MODULE__
 
-  @enforce_keys [:context, :key, :value]
+  @enforce_keys [:context, :key, :value, :client]
   defstruct(
     context: nil, # Vector Clock
     value: nil,
-    key: nil
+    key: nil,
+    client: nil
   )
 
-  def new(key, context, value) do
-    %PutEntryRequest{context: context, value: value, key: key}
+  def new(key, context, value, client) do
+    %PutEntry{context: context, value: value, key: key, client: client}
   end
 end
 
@@ -81,15 +83,15 @@ defmodule DynamoNode.PutEntryResponse do
   """
   alias __MODULE__
 
-  @enforce_keys [:key, :value, :ack]
+  @enforce_keys [:key, :ack, :client]
   defstruct(
     ack: nil, # :ok
-    value: nil,
-    key: nil
+    key: nil,
+    client: nil
   )
 
-  def new(key, value, ack) do
-    %PutEntryResponse{ack: ack, value: value, key: key}
+  def new(key, ack, client) do
+    %PutEntryResponse{ack: ack, key: key, client: client}
   end
 end
 
@@ -100,31 +102,32 @@ defmodule DynamoNode.GetEntryResponse do
   """
   alias __MODULE__
 
-  @enforce_keys [:client, :entry, :ack]
+  @enforce_keys [:client, :entry]
   defstruct(
-    ack: nil, # :ok
+    ack: nil,
     entry: nil,
     client: nil
   )
-  def new(client, entry, ack) do
-    %GetEntryResponse{ack: ack, entry: entry, client: client}
+  def new(client, entry) do
+    %GetEntryResponse{entry: entry, client: client}
   end
 end
 
-defmodule DynamoNode.GetEntryRequest do
+defmodule DynamoNode.GetEntry do
   alias __MODULE__
 
   @moduledoc """
     Get entry request to get value from the replicated nodes.
     This is intiated by the coordinator node for quorum based protocol.
   """
-  @enforce_keys [:key]
+  @enforce_keys [:key, :client]
   defstruct(
-    key: nil
+    key: nil,
+    client: nil
   )
 
-  def new(key) do
-    %GetEntryRequest{key: key}
+  def new(key, client) do
+    %GetEntry{key: key, client: client}
   end
 end
 

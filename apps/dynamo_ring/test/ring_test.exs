@@ -35,6 +35,17 @@ defmodule RingTest do
     Emulation.terminate()
   end
 
+  test "Test Node for key" do
+    Emulation.init()
+    Emulation.append_fuzzers([Fuzzers.delay(2)])
+    ring = Ring.new()
+    ring = Ring.add_nodes(ring, [:a, :b, :c, :d])
+    preference_list = Ring.nodes_for_key(ring, "foo", 3)
+    Enum.each(preference_list, fn node -> IO.puts(node) end)
+  after
+    Emulation.terminate()
+  end
+
   test "Check Sync Ring" do
     Emulation.init()
     Emulation.append_fuzzers([Fuzzers.delay(2)])
