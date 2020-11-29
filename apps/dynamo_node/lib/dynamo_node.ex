@@ -145,7 +145,6 @@ defmodule DynamoNode do
     IO.puts("Check if write received #{Map.fetch!(extra_state, client)}")
     if Map.has_key?(extra_state, client) do
       # Check If "W" acknowledgement is received
-
       if Map.fetch!(extra_state, client) + 1 >= node.w do
         send(client, :ok)
         {node,  Map.delete(extra_state, client)}
@@ -226,11 +225,20 @@ defmodule DynamoNode do
           # I am the coordinator node, get from the database and ask other nodes
           entry = DynamoNode.KV.get(node.kv, key)
           case entry do
+            :noentry ->
+              # Noentry can happen, when client saved this request to server A,
+              # but currenty this entry is handled by server B, during joining of ring,
+              # B didn't have this entry in it's database so it asks for the given entry to all
+              # the servers in the ring
+              node_list = Enum.filter(node.state.nodes, fn x -> x != whoami() end)
+              send(node_list, DynamoNode.GetEntry.new(key, client))
+              {node, extra_state}
+
             %DynamoNode.Entry{key: ^key} ->
               send_requests(tail, DynamoNode.GetEntry.new(key, client))
               # This is needed for "R = 1".
-              check_quorum_read(node, extra_state, client, Map.put(extra_state, key, [entry]))
-              {node, extra_state}
+              extra_state = Map.put_new(extra_state, client, [entry])
+              check_quorum_read(node, extra_state, client, extra_state)
             true ->
               #TODO Think about what to do if the entry is not present in the db
               {node, extra_state}
@@ -277,23 +285,30 @@ defmodule DynamoNode do
         run_node(node, extra_state)
         # code
 
-      {sender, %DynamoNode.GetEntry{key: key}} ->
+      {sender, %DynamoNode.GetEntry{key: key, client: client}} ->
         IO.puts("(#{whoami()}) received Get Entry Request from (#{sender}) <> #{key}")
         # Handle  GetEntry for replication
         # TODO
+        entry = DynamoNode.KV.get(node.kv, key)
+        send(sender, DynamoNode.GetEntryResponse.new(client, entry, key))
         run_node(node, extra_state)
 
       {sender, %DynamoNode.GetEntryResponse{
         client: client,
         entry: entry,
-        key: key
+        key: key,
       }} ->
         # Handle  GetEntry Response
         # Merge the context and send response to the client
         # TODO
         IO.puts("(#{whoami()}) received Get Entry Response from (#{sender}) <> #{key}")
-        {node, extra_state} = check_quorum_read(node, extra_state, client, entry)
-        run_node(node, extra_state)
+        case entry do
+          :noentry ->
+            run_node(node, extra_state)
+          true ->
+            {node, extra_state} = check_quorum_read(node, extra_state, client, entry)
+            run_node(node, extra_state)
+        end
 
       {sender, %DynamoNode.PutEntry{
         context: context,

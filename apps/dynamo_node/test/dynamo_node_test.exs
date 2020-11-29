@@ -125,5 +125,4 @@ defmodule DynamoNodeTest do
     Emulation.terminate()
   end
 
-
 end

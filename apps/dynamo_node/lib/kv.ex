@@ -94,26 +94,6 @@ defmodule DynamoNode.PutEntryResponse do
     %PutEntryResponse{ack: ack, key: key, client: client}
   end
 end
-
-defmodule DynamoNode.GetEntryResponse do
-
-  @moduledoc """
-  PutEntryReply by the replication node to the coordinator node.
-  """
-  alias __MODULE__
-
-  @enforce_keys [:client, :entry, :key]
-  defstruct(
-    ack: nil,
-    entry: nil,
-    client: nil,
-    key: nil
-  )
-  def new(client, entry, key) do
-    %GetEntryResponse{entry: entry, client: client, key: key}
-  end
-end
-
 defmodule DynamoNode.GetEntry do
   alias __MODULE__
 
@@ -129,6 +109,26 @@ defmodule DynamoNode.GetEntry do
 
   def new(key, client) do
     %GetEntry{key: key, client: client}
+  end
+end
+
+
+defmodule DynamoNode.GetEntryResponse do
+
+  @moduledoc """
+  GetEntryResponse by the replication node to the coordinator node.
+  """
+  alias __MODULE__
+
+  @enforce_keys [:key, :client, :entry]
+  defstruct(
+    key: nil, # :ok
+    client: nil,
+    entry: nil
+  )
+
+  def new(key, client, entry) do
+    %GetEntryResponse{key: key, client: client, entry: entry}
   end
 end
 
