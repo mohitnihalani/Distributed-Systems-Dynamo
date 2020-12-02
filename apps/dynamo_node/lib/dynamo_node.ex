@@ -223,6 +223,7 @@ defmodule DynamoNode do
     if Map.has_key?(extra_state, client) do
       # Check If "W" acknowledgement is received
       if Map.fetch!(extra_state, client) + 1 >= node.w do
+        IO.puts("(#{whoami()}) Have enough confirmations")
         send(client, :ok)
         {node,  Map.delete(extra_state, client)}
       else
@@ -267,7 +268,7 @@ defmodule DynamoNode do
   defp handle_put_request(node, extra_state, client, key, value, context) do
     # Get the preferred list
     preference_list = get_preference_list(node.state, key, node.n)
-    Enum.each(preference_list, fn node -> IO.puts(node) end)
+    #Enum.each(preference_list, fn node -> IO.puts(node) end)
     pid = whoami()
     case preference_list do
       [^pid | tail]->
@@ -462,6 +463,7 @@ defmodule DynamoNode do
 
         IO.puts("(#{whoami()}) received Put Entry Response from (#{sender}) <> #{key}")
         {node, extra_state} = check_quorum_write(node, extra_state, client)
+        run_node(node, extra_state)
 
       # ---------------  Handle Redirect Client Request -----------------------------#
 
@@ -549,9 +551,11 @@ defmodule DynamoNode.Client do
 
   @spec put_request(%Client{}, any(), any(), any(), atom()) :: {:ok | :fail, %Client{}}
   def put_request(client, key, value, context, node) do
+    IO.puts(key)
     send(node, {:put, {key, value, context}})
     receive do
-      {_sender, :ok} -> {:ok, client}
+      {_sender, :ok} ->
+        {:ok, client}
     after
       1000 -> {:fail,client}
     end

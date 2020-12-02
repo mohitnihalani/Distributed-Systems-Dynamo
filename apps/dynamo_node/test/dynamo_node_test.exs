@@ -107,7 +107,10 @@ defmodule DynamoNodeTest do
          7_000 -> :ok
        end
 
-       assert DynamoNode.Client.put_request(client, "foo", 200, nil, :b) == {:ok, client}
+      assert DynamoNode.Client.put_request(client, "foo", 200, nil, :b) == {:ok, client}
+      assert DynamoNode.Client.put_request(client, "mah", 200, nil, :c) == {:ok, client}
+      assert DynamoNode.Client.put_request(client, "lsk", 200, nil, :c) == {:ok, client}
+      #assert DynamoNode.Client.put_request(client, "mah", 200, nil, :a) == {:ok, client}
       #{node_ring, ^client} = DynamoNode.Client.client_get_state(client, :d)
       #assert MapSet.equal?(MapSet.new([:a, :b, :c, :d]), Ring.get_nodes_list(node_ring)) == true
 
