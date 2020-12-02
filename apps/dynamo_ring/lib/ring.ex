@@ -13,7 +13,8 @@ defmodule Ring do
     ring: nil,
     nodes: nil,
     virtual_nodes: 128,  # Default Virutal Nodes of the server,
-    vector_clock: nil
+    vector_clock: nil,
+    suspect_node: nil
   )
 
   @hash_range trunc(:math.pow(2, 32) - 1)
@@ -22,7 +23,7 @@ defmodule Ring do
   def new() do
     # TODO
     # Initialize vector clock
-    %Ring{ring: :gb_trees.empty , nodes: MapSet.new()}
+    %Ring{ring: :gb_trees.empty , nodes: MapSet.new(), suspect_node: MapSet.new()}
   end
 
   @spec new(atom()) :: %Ring{}
@@ -30,7 +31,6 @@ defmodule Ring do
     hash_ring = new()
     add_node(hash_ring, node)
   end
-
 
   @spec add_node(%Ring{}, atom()) :: %Ring{}
   defp add_node(ring, node_key) do
@@ -105,6 +105,18 @@ defmodule Ring do
     end
   end
 
+  def get_node_incarnation(%Ring{vector_clock: version}, node) do
+    # First Check if contains node, if not send -1
+    #TODO
+    # Return node_incarnation for indirect probe
+    0
+  end
+
+  def update_node_incarnation(%Ring{vector_clock: version} = ring, node, incarnation) do
+    #TODO
+    # Call vector clock to update version for this node
+    ring
+  end
 
   @spec sync_rings(%Ring{}, %Ring{}) :: %Ring{}
   def sync_rings(%Ring{ring: ring1, nodes: nodes1, vector_clock: version1}, %Ring{ring: ring2, nodes: nodes2, vector_clock: version2}) do

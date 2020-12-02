@@ -37,6 +37,7 @@ defmodule DynamoNode do
     heartbeat_timeout: 2000,
     probe_timer: nil,
     probe_timeout: 1000,
+    probe_count: 5,
     ack_timer: nil,
     ack_timeout: 500,
 
@@ -78,6 +79,10 @@ defmodule DynamoNode do
     %{node | ack_timer: Emulation.timer(node.ack_timeout)}
   end
 
+  defp start_probe_timer(node)  do
+    %{node | probe_timer: Emulation.timer(node.probe_timeout)}
+  end
+
   @spec reset_gossip_timeout(%DynamoNode{}) :: %DynamoNode{}
   defp reset_gossip_timeout(%DynamoNode{heartbeat_timer: heartbeat_timer} = node) do
     if heartbeat_timer, do: Emulation.cancel_timer(heartbeat_timer)
@@ -104,6 +109,37 @@ defmodule DynamoNode do
     Ring.sync_rings(state, otherstate)
   end
 
+  defp update_node_version(node, other_node, version) do
+    %{node | state: Ring.update_node_incarnation(node.state, other_node, version)}
+  end
+
+  defp start_gossip_indirect_probe(node, extra_state, random_node) do
+    IO.puts("(#{whoami()}) Running Indirect Probe Request")
+    me = whoami()
+    indirect_probe_list = Enum.filter(node.state.nodes, fn x -> x != whoami() && x != random_node end)
+    indirect_probe_list = Enum.shuffle(indirect_probe_list) |> Enum.take(min(node.probe_count, Enum.count(indirect_probe_list)))
+    send_requests(indirect_probe_list, DynamoNode.IndirectProbe.new(random_node, Ring.get_node_incarnation(node.state, random_node), me))
+
+    node = start_probe_timer(node)
+    receive do
+
+      :timer ->
+        IO.puts("Indirect Probe Failed <> #{whoami()} marking #{random_node} as SUSPECT")
+        #TODO Handle node suspect
+        {node, extra_state}
+
+      {sender, %DynamoNode.IndirectProbeResponse{
+        node: ^random_node,
+        incarnation: incarnation,
+        status: :alive,
+        requestee: ^me
+      }} ->
+        Emulation.cancel_timer(node.probe_timer)
+        node = update_node_version(node, random_node, incarnation)
+        {node, extra_state}
+    end
+
+  end
   """
   Method to run gossip protocol
   """
@@ -131,8 +167,9 @@ defmodule DynamoNode do
 
         :timer ->
           IO.puts("(#{whoami()}) Gossip Protocol Request Timeout #{random_node}")
-          run_node(node, extra_state)
+          #{node, extra_state} = start_gossip_indirect_probe(node, extra_state, random_node)
           node = reset_gossip_timeout(node)
+          run_node(node, extra_state)
       end
 
     end
@@ -289,6 +326,29 @@ defmodule DynamoNode do
         node = %{node | state: handle_share_state_request(node.state, {sender, otherstate})}
         run_node(node, extra_state)
         # code
+
+      {sender, %DynamoNode.IndirectProbe{node: other_node, incarnation: other_incarnation, requestee: requestee} = probe_request} ->
+        incarnation = Ring.get_node_incarnation(node.state, other_node)
+        if other_node == whoami() ||  incarnation > other_incarnation do
+          send(sender, DynamoNode.IndirectProbeResponse.new(other_node, incarnation, :alive, requestee))
+        else
+          send(other_node, probe_request)
+        end
+
+        run_node(node, extra_state)
+
+      {sender, %DynamoNode.IndirectProbeResponse{node: other_node, incarnation: other_incarnation, status: status, requestee: requestee} = probe_response} ->
+        me = whoami()
+        case requestee do
+          ^me ->
+            #TODO IF in suspect list mark as alive else don't do anythind
+            run_node(node, extra_state)
+
+          _ ->
+            send(requestee, probe_response)
+            run_node(node, extra_state)
+        end
+
 
       {sender, %DynamoNode.GetEntry{key: key, client: client}} ->
         IO.puts("(#{whoami()}) received Get Entry Request from (#{sender}) <> #{key}")

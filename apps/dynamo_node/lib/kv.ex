@@ -178,32 +178,34 @@ defmodule DynamoNode.IndirectProbe do
   """
   alias __MODULE__
 
-  @enforce_keys [:node, :incarnation]
+  @enforce_keys [:node, :incarnation, :requestee]
   defstruct(
     node: nil,
     incarnation: nil,
+    requestee: nil
   )
 
-  def new(node, incarnation) do
-    %IndirectProbe{node: node, incarnation: incarnation}
+  def new(node, incarnation, requestee) do
+    %IndirectProbe{node: node, incarnation: incarnation, requestee: requestee}
   end
 end
 
-defmodule DynamoNode.IndirectProbeReply do
+defmodule DynamoNode.IndirectProbeResponse do
 
   @moduledoc """
   Indirect Probe Request for Gossip Protocol
   """
   alias __MODULE__
 
-  @enforce_keys [:node, :incarnation, :status]
+  @enforce_keys [:node, :incarnation, :status, :requestee]
   defstruct(
     node: nil,
     incarnation: nil,
-    status: nil
+    status: nil,
+    requestee: nil
   )
 
-  def new(node, incarnation, status) do
-    %IndirectProbeReply{node: node, incarnation: incarnation, status: status}
+  def new(node, incarnation, status, requestee) do
+    %IndirectProbeResponse{node: node, incarnation: incarnation, status: status, requestee: requestee}
   end
 end
