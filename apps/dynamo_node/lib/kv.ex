@@ -209,3 +209,56 @@ defmodule DynamoNode.IndirectProbeResponse do
     %IndirectProbeResponse{node: node, incarnation: incarnation, status: status, requestee: requestee}
   end
 end
+
+defmodule DynamoNode.SuspectNode do
+
+  @moduledoc """
+  Indirect Probe Request for Gossip Protocol
+  """
+  alias __MODULE__
+
+  @enforce_keys [:node, :incarnation]
+  defstruct(
+    node: nil,
+    incarnation: nil,
+  )
+
+  def new(node, incarnation) do
+    %SuspectNode{node: node, incarnation: incarnation}
+  end
+end
+
+defmodule DynamoNode.NodeAlive do
+
+  @moduledoc """
+  Indirect Probe Request for Gossip Protocol
+  """
+  alias __MODULE__
+
+  @enforce_keys [:node, :incarnation]
+  defstruct(
+    node: nil,
+    incarnation: nil,
+  )
+
+  def new(node, incarnation) do
+    %NodeAlive{node: node, incarnation: incarnation}
+  end
+end
+
+defmodule DynamoNode.NodeFailed do
+
+  @moduledoc """
+  Indirect Probe Request for Gossip Protocol
+  """
+  alias __MODULE__
+
+  @enforce_keys [:node]
+  defstruct(
+    node: nil,
+  )
+
+  def new(node) do
+    %NodeFailed{node: node}
+  end
+end

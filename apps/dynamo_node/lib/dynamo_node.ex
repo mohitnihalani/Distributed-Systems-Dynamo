@@ -109,14 +109,45 @@ defmodule DynamoNode do
     Ring.sync_rings(state, otherstate)
   end
 
+
   defp update_node_version(node, other_node, version) do
     %{node | state: Ring.update_node_incarnation(node.state, other_node, version)}
   end
 
+  defp increment_vector_clock(node) do
+    %{node | state: Ring.increment_vector_clock(node.state, whoami())}
+  end
+
+  defp add_suspect_node(node, suspect_node, incarnation) do
+    node = %{node | state: Ring.add_suspect_node(node.state, suspect_node, incarnation, now())}
+    spread_suspect_gossip(node, suspect_node)
+  end
+
+  defp handle_node_alive(node, suspect_node) do
+    %{node | state: Ring.handle_node_alive(node.state, suspect_node)}
+  end
+
+  defp handle_node_fail(node, failed_node) do
+    %{node | state: Ring.remove_node(node.state, failed_node)}
+  end
+
+  defp spread_suspect_gossip(node, suspect_node) do
+    node_list = Enum.filter(node.state.nodes, fn x -> x != whoami() end)
+    node_list = Enum.shuffle(node_list) |> Enum.take(min(node.probe_count, Enum.count(node_list)))
+    incarnation = Ring.get_node_incarnation(node.state, suspect_node)
+    send_requests(node_list, DynamoNode.SuspectNode.new(suspect_node, incarnation))
+  end
+
+  defp spread_node_failed(node, failed_node) do
+    node_list = Enum.filter(node.state.nodes, fn x -> x != whoami() end)
+    send_requests(node_list, DynamoNode.NodeFailed.new(failed_node))
+  end
+
   defp start_gossip_indirect_probe(node, extra_state, random_node) do
     IO.puts("(#{whoami()}) Running Indirect Probe Request")
+
     me = whoami()
-    indirect_probe_list = Enum.filter(node.state.nodes, fn x -> x != whoami() && x != random_node end)
+    indirect_probe_list = Enum.filter(node.state.nodes, fn x -> x != whoami() end)
     indirect_probe_list = Enum.shuffle(indirect_probe_list) |> Enum.take(min(node.probe_count, Enum.count(indirect_probe_list)))
     send_requests(indirect_probe_list, DynamoNode.IndirectProbe.new(random_node, Ring.get_node_incarnation(node.state, random_node), me))
 
@@ -126,6 +157,8 @@ defmodule DynamoNode do
       :timer ->
         IO.puts("Indirect Probe Failed <> #{whoami()} marking #{random_node} as SUSPECT")
         #TODO Handle node suspect
+        # 1. Add node to suspect node
+        node = add_suspect_node(node, random_node, -1)
         {node, extra_state}
 
       {sender, %DynamoNode.IndirectProbeResponse{
@@ -154,10 +187,12 @@ defmodule DynamoNode do
       random_node = Enum.random(node_list)
       send(random_node,DynamoNode.ShareStateRequest.new(node.state))
       node = start_ack_timer(node)
+      node = increment_vector_clock(node)
       receive do
         {^random_node, %DynamoNode.ShareStateResponse{
           state: otherstate
         }} ->
+
           IO.puts("(#{whoami()}) Received Share State Response from (#{random_node})
           <> #{whoami()} has #{Ring.get_node_count(node.state)} and #{random_node} have #{Ring.get_node_count(otherstate)}")
           node = %{node | state: join_states(node.state, otherstate)}
@@ -309,6 +344,7 @@ defmodule DynamoNode do
   """
   defp run_node(node, extra_state) do
     #IO.puts("Running Node  #{whoami()}")
+    node = increment_vector_clock(node)
     receive do
 
       :timer ->
@@ -319,6 +355,7 @@ defmodule DynamoNode do
           run_node(node, extra_state)
         end
 
+      #---------------------------  Gossip Protocol Request ------------------------------------------- #
       # Share State Request For Gossip Protocol
       {sender, %DynamoNode.ShareStateRequest{state: otherstate}} ->
         IO.puts("#{whoami()} (#{Ring.get_node_count(node.state)}) Received Share State request from #{sender} (#{Ring.get_node_count(otherstate)})")
@@ -328,6 +365,7 @@ defmodule DynamoNode do
         # code
 
       {sender, %DynamoNode.IndirectProbe{node: other_node, incarnation: other_incarnation, requestee: requestee} = probe_request} ->
+        IO.puts("(#{whoami()}) received Indirect probing request for (#{other_node}) from (#{sender})")
         incarnation = Ring.get_node_incarnation(node.state, other_node)
         if other_node == whoami() ||  incarnation > other_incarnation do
           send(sender, DynamoNode.IndirectProbeResponse.new(other_node, incarnation, :alive, requestee))
@@ -349,7 +387,34 @@ defmodule DynamoNode do
             run_node(node, extra_state)
         end
 
+      # Handle Suspect Node
+      {sender, %DynamoNode.SuspectNode{node: suspect_node, incarnation: other_incarnation}} ->
+        IO.puts("(#{whoami()}) received suspect node request for (#{suspect_node}) from (#{sender})")
+        if Ring.get_node_incarnation(node.state, suspect_node) <= other_incarnation do
+          node = add_suspect_node(node, suspect_node, other_incarnation)
+          run_node(node, extra_state)
+        else
+          send(sender, DynamoNode.NodeAlive.new(suspect_node, Ring.get_node_incarnation(node.state, suspect_node)))
+          run_node(node, extra_state)
+        end
 
+      # Handle Node Alive
+      {sender, %DynamoNode.NodeAlive{node: suspect_node, incarnation: other_incarnation}} ->
+        IO.puts("(#{whoami()}) received Node Alive response for (#{suspect_node}) from (#{sender})")
+        if Ring.get_node_incarnation(node.state, suspect_node) < other_incarnation do
+          # Handle Node Alive
+          run_node(handle_node_alive(node, suspect_node), extra_state)
+        else
+          # Old message do nothing
+          run_node(node, extra_state)
+        end
+
+      # Handle Failed Node
+      {sender, %DynamoNode.NodeFailed{node: failed_node}} ->
+        IO.puts("(#{whoami()}) received Node Failed request for (#{failed_node}) from (#{sender})")
+        run_node(handle_node_fail(node, failed_node), extra_state)
+
+      # ---------------  Handle Get Request -----------------------------#
       {sender, %DynamoNode.GetEntry{key: key, client: client}} ->
         IO.puts("(#{whoami()}) received Get Entry Request from (#{sender}) <> #{key}")
         # Handle  GetEntry for replication
@@ -375,6 +440,7 @@ defmodule DynamoNode do
             run_node(node, extra_state)
         end
 
+      # ---------------  Handle Put Request -----------------------------#
       {sender, %DynamoNode.PutEntry{
         context: context,
         value: value,

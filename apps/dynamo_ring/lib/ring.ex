@@ -14,7 +14,7 @@ defmodule Ring do
     nodes: nil,
     virtual_nodes: 128,  # Default Virutal Nodes of the server,
     vector_clock: nil,
-    suspect_node: nil
+    suspect_nodes: nil
   )
 
   @hash_range trunc(:math.pow(2, 32) - 1)
@@ -23,7 +23,7 @@ defmodule Ring do
   def new() do
     # TODO
     # Initialize vector clock
-    %Ring{ring: :gb_trees.empty , nodes: MapSet.new(), suspect_node: MapSet.new()}
+    %Ring{ring: :gb_trees.empty , nodes: MapSet.new(), suspect_nodes: %{}}
   end
 
   @spec new(atom()) :: %Ring{}
@@ -105,17 +105,60 @@ defmodule Ring do
     end
   end
 
-  def get_node_incarnation(%Ring{vector_clock: version}, node) do
-    # First Check if contains node, if not send -1
+  def increment_vector_clock(ring, node) do
     #TODO
-    # Return node_incarnation for indirect probe
+    ring
+  end
+  def get_node_version(ring, node) do
     0
   end
 
-  def update_node_incarnation(%Ring{vector_clock: version} = ring, node, incarnation) do
+  def get_node_incarnation(ring, node) do
+    # First Check if contains node, if not send -1
+    #TODO
+    # Return node_incarnation for indirect probe
+    get_node_version(ring, node)
+  end
+
+  def update_node_version(%Ring{vector_clock: version} = ring, node, incarnation) do
     #TODO
     # Call vector clock to update version for this node
-    ring
+
+  end
+
+  def update_node_incarnation(ring, node, incarnation) do
+    update_node_version(ring, node, incarnation)
+  end
+
+  """
+  Check if node is a suspect node
+  """
+  def is_suspect_node(%Ring{suspect_nodes: suspect_nodes}, suspect_node) do
+    Map.has_key?(suspect_nodes, suspect_node)
+  end
+
+  """
+  Add node as the suspect node
+  """
+  def add_suspect_node(%Ring{suspect_nodes: suspect_nodes} = ring, suspect_node, incarnation, time) do
+    cond do
+      is_suspect_node(ring, suspect_node) && get_node_incarnation(ring, suspect_node) < incarnation ->
+        ring = update_node_incarnation(ring, suspect_node, incarnation)
+        %{ring | suspect_nodes: Map.put(suspect_nodes, suspect_node, time)}
+      !is_suspect_node(ring, suspect_node) ->
+        ring = update_node_incarnation(ring, suspect_node, incarnation)
+        %{ring | suspect_nodes: Map.put_new(suspect_nodes, suspect_node, time)}
+      true ->
+        ring
+    end
+  end
+
+  def handle_node_alive(%Ring{suspect_nodes: suspect_nodes} = ring, suspect_node) do
+    if is_suspect_node(ring, suspect_node) do
+      %{ring | suspect_nodes: Map.delete(suspect_nodes, suspect_node)}
+    else
+      ring
+    end
   end
 
   @spec sync_rings(%Ring{}, %Ring{}) :: %Ring{}
