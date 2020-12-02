@@ -13,13 +13,15 @@ defmodule Ring do
     ring: nil,
     nodes: nil,
     virtual_nodes: 128,  # Default Virutal Nodes of the server,
-    version: nil
+    vector_clock: nil
   )
 
   @hash_range trunc(:math.pow(2, 32) - 1)
 
   @spec new :: %Ring{}
   def new() do
+    # TODO
+    # Initialize vector clock
     %Ring{ring: :gb_trees.empty , nodes: MapSet.new()}
   end
 
@@ -105,7 +107,7 @@ defmodule Ring do
 
 
   @spec sync_rings(%Ring{}, %Ring{}) :: %Ring{}
-  def sync_rings(%Ring{ring: ring1, nodes: nodes1, version: version1}, %Ring{ring: ring2, nodes: nodes2, version: version2}) do
+  def sync_rings(%Ring{ring: ring1, nodes: nodes1, vector_clock: version1}, %Ring{ring: ring2, nodes: nodes2, vector_clock: version2}) do
     tree1 =:gb_trees.to_list(ring1)
     |> Enum.map(fn {key, value} -> {key, value} end)
     |> Enum.into(%{})
@@ -122,7 +124,7 @@ defmodule Ring do
     # TODO
     # Sync Version Vector
     version = nil
-    %Ring{ring: tree, nodes: MapSet.union(nodes1, nodes2), version: version}
+    %Ring{ring: tree, nodes: MapSet.union(nodes1, nodes2), vector_clock: version}
   end
   @spec get_nodes_list(%Ring{}) :: MapSet
   def get_nodes_list(%Ring{nodes: nodes}) do

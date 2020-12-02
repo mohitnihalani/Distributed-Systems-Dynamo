@@ -55,7 +55,7 @@ defmodule DynamoNodeTest do
        # Give things a bit of time to settle down.
        receive do
        after
-         5_000 -> :ok
+         10_000 -> :ok
        end
 
        {node_ring, ^client} = DynamoNode.Client.client_get_state(client, :a)

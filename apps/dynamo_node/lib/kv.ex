@@ -170,3 +170,40 @@ defmodule DynamoNode.ShareStateResponse do
     %ShareStateResponse{state: state}
   end
 end
+
+defmodule DynamoNode.IndirectProbe do
+
+  @moduledoc """
+  Indirect Probe Request for Gossip Protocol
+  """
+  alias __MODULE__
+
+  @enforce_keys [:node, :incarnation]
+  defstruct(
+    node: nil,
+    incarnation: nil,
+  )
+
+  def new(node, incarnation) do
+    %IndirectProbe{node: node, incarnation: incarnation}
+  end
+end
+
+defmodule DynamoNode.IndirectProbeReply do
+
+  @moduledoc """
+  Indirect Probe Request for Gossip Protocol
+  """
+  alias __MODULE__
+
+  @enforce_keys [:node, :incarnation, :status]
+  defstruct(
+    node: nil,
+    incarnation: nil,
+    status: nil
+  )
+
+  def new(node, incarnation, status) do
+    %IndirectProbeReply{node: node, incarnation: incarnation, status: status}
+  end
+end

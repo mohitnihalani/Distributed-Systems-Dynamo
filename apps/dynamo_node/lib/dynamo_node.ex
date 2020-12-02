@@ -30,12 +30,23 @@ defmodule DynamoNode do
     state: nil,
     pid: nil,
     kv: %DynamoNode.KV{},
-    heartbeat_timer: nil,
-    heartbeat_timeout: 1000,
     seed_node: nil,
+
+    # Gossip Protocol
+    heartbeat_timer: nil,
+    heartbeat_timeout: 2000,
+    probe_timer: nil,
+    probe_timeout: 1000,
+    ack_timer: nil,
+    ack_timeout: 500,
+
+    # For Quorum
     n: 3, # (N,R,W) for quorum
     r: 2,
     w: 1,
+
+    # This can also be used as a incarnation number
+    # For Swim Protocol
     version: 0
   )
 
@@ -56,13 +67,16 @@ defmodule DynamoNode do
 
   @spec get_gossip_timeout(%DynamoNode{}) :: non_neg_integer()
   defp get_gossip_timeout(%DynamoNode{heartbeat_timeout: heartbeat_timeout}=state) do
-    :rand.uniform(heartbeat_timeout) + 500
+    :rand.uniform(heartbeat_timeout) + 200
   end
 
   defp save_heartbeat_timer(node, timer) do
     %{node | heartbeat_timer: timer}
   end
 
+  defp start_ack_timer(node)  do
+    %{node | ack_timer: Emulation.timer(node.ack_timeout)}
+  end
 
   @spec reset_gossip_timeout(%DynamoNode{}) :: %DynamoNode{}
   defp reset_gossip_timeout(%DynamoNode{heartbeat_timer: heartbeat_timer} = node) do
@@ -94,24 +108,16 @@ defmodule DynamoNode do
   Method to run gossip protocol
   """
   def run_gossip_protocol(node, extra_state) do
-    #:rand.seed(:exrop, {101, 102, 103})
-    # Filter Current Node from the list
 
+    # Filter Current Node from the list
     node_list = Enum.filter(node.state.nodes, fn x -> x != whoami() end)
     if Enum.count(node_list) <= 0 do
       node = reset_gossip_timeout(node)
       run_node(node, extra_state)
     else
       random_node = Enum.random(node_list)
-
-      IO.puts("#{whoami()} (#{Enum.count(node_list)}) Initiated Gossip Protocl Request to #{random_node}")
-      """
-      for x <- node_list do
-        IO.puts(x)
-      end
-      """
       send(random_node,DynamoNode.ShareStateRequest.new(node.state))
-      timeout = Emulation.timer(500)
+      node = start_ack_timer(node)
       receive do
         {^random_node, %DynamoNode.ShareStateResponse{
           state: otherstate
@@ -119,7 +125,7 @@ defmodule DynamoNode do
           IO.puts("(#{whoami()}) Received Share State Response from (#{random_node})
           <> #{whoami()} has #{Ring.get_node_count(node.state)} and #{random_node} have #{Ring.get_node_count(otherstate)}")
           node = %{node | state: join_states(node.state, otherstate)}
-          Emulation.cancel_timer(timeout)
+          Emulation.cancel_timer(node.ack_timer)
           node = reset_gossip_timeout(node)
           run_node(node, extra_state)
 
@@ -142,7 +148,6 @@ defmodule DynamoNode do
   end
 
   def check_quorum_write(node, extra_state, client) do
-    IO.puts("Check if write received #{Map.fetch!(extra_state, client)}")
     if Map.has_key?(extra_state, client) do
       # Check If "W" acknowledgement is received
       if Map.fetch!(extra_state, client) + 1 >= node.w do
@@ -419,7 +424,6 @@ defmodule DynamoNode.Client do
   @spec put_request(%Client{}, any(), any(), any(), atom()) :: {:ok | :fail, %Client{}}
   def put_request(client, key, value, context, node) do
     send(node, {:put, {key, value, context}})
-
     receive do
       {_sender, :ok} -> {:ok, client}
     after
