@@ -43,7 +43,6 @@ defmodule DynamoNodeTest do
     spawn(:b, fn -> DynamoNode.lauch_node(DynamoNode.init(:a)) end)
     spawn(:c, fn -> DynamoNode.lauch_node(DynamoNode.init(:b)) end)
     spawn(:d, fn -> DynamoNode.lauch_node(DynamoNode.init(:c)) end)
-
     caller = self()
     client = spawn(:c1, fn ->
       client = DynamoNode.Client.new_client(:c1)
@@ -110,6 +109,59 @@ defmodule DynamoNodeTest do
       assert DynamoNode.Client.put_request(client, "foo", 200, nil, :b) == {:ok, client}
       assert DynamoNode.Client.put_request(client, "mah", 200, nil, :c) == {:ok, client}
       assert DynamoNode.Client.put_request(client, "lsk", 200, nil, :c) == {:ok, client}
+      #assert DynamoNode.Client.put_request(client, "mah", 200, nil, :a) == {:ok, client}
+      #{node_ring, ^client} = DynamoNode.Client.client_get_state(client, :d)
+      #assert MapSet.equal?(MapSet.new([:a, :b, :c, :d]), Ring.get_nodes_list(node_ring)) == true
+
+    end)
+
+    handle = Process.monitor(client)
+    # Timeout.
+    receive do
+      {:DOWN, ^handle, _, _, _} -> true
+    after
+      30_000 -> assert false
+    end
+
+  after
+    Emulation.terminate()
+  end
+
+  test "Test Replicate with increase w request" do
+    Emulation.init()
+    Emulation.append_fuzzers([Fuzzers.delay(2)])
+
+    n = 4
+    r = 2
+    w = 2
+    spawn(:a, fn -> DynamoNode.lauch_node(DynamoNode.init(n, r, w)) end)
+    spawn(:b, fn -> DynamoNode.lauch_node(DynamoNode.init(:a, n, r, w)) end)
+    spawn(:c, fn -> DynamoNode.lauch_node(DynamoNode.init(:b, n, r, w)) end)
+    spawn(:d, fn -> DynamoNode.lauch_node(DynamoNode.init(:c, n, r, w)) end)
+    spawn(:e, fn -> DynamoNode.lauch_node(DynamoNode.init(:b, n, r, w)) end)
+    spawn(:f, fn -> DynamoNode.lauch_node(DynamoNode.init(:c, n, r, w)) end)
+
+    caller = self()
+    client = spawn(:c1, fn ->
+      client = DynamoNode.Client.new_client(:c1)
+      assert DynamoNode.Client.check_node_status(client, :a) == {:ok, client}
+      assert DynamoNode.Client.check_node_status(client, :b) == {:ok, client}
+      assert DynamoNode.Client.check_node_status(client, :c) == {:ok, client}
+      assert DynamoNode.Client.check_node_status(client, :d) == {:ok, client}
+      assert DynamoNode.Client.check_node_status(client, :e) == {:ok, client}
+      assert DynamoNode.Client.check_node_status(client, :f) == {:ok, client}
+
+       # Give things a bit of time to settle down.
+       receive do
+       after
+         7_000 -> :ok
+       end
+
+      assert DynamoNode.Client.put_request(client, "foo", 200, nil, :b) == {:ok, client}
+      assert DynamoNode.Client.put_request(client, "mah", 200, nil, :c) == {:ok, client}
+      assert DynamoNode.Client.put_request(client, "lsk", 200, nil, :c) == {:ok, client}
+      assert DynamoNode.Client.put_request(client, "hellowoorld", 200, nil, :c) == {:ok, client}
+      assert DynamoNode.Client.put_request(client, "distributed", 200, nil, :c) == {:ok, client}
       #assert DynamoNode.Client.put_request(client, "mah", 200, nil, :a) == {:ok, client}
       #{node_ring, ^client} = DynamoNode.Client.client_get_state(client, :d)
       #assert MapSet.equal?(MapSet.new([:a, :b, :c, :d]), Ring.get_nodes_list(node_ring)) == true

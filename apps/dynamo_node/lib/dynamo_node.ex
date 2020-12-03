@@ -57,13 +57,25 @@ defmodule DynamoNode do
     %DynamoNode{state: hash_ring, pid: whoami()}
   end
 
-  """
-  With Seed Node
-  """
+
+  def init(n, r, w) do
+    hash_ring = Ring.new(whoami())
+    %DynamoNode{state: hash_ring, pid: whoami(), n: n, r: r, w: w}
+  end
+
   def init(seed_node) do
     hash_ring = Ring.new()
     hash_ring = Ring.add_nodes(hash_ring, [whoami(), seed_node])
     node = %DynamoNode{state: hash_ring, pid: whoami(), seed_node: seed_node}
+  end
+
+  """
+  With Seed Node
+  """
+  def init(seed_node, n, r, w) do
+    hash_ring = Ring.new()
+    hash_ring = Ring.add_nodes(hash_ring, [whoami(), seed_node])
+    node = %DynamoNode{state: hash_ring, pid: whoami(), seed_node: seed_node, n: n, r: r, w: w}
   end
 
   @spec get_gossip_timeout(%DynamoNode{}) :: non_neg_integer()
@@ -223,7 +235,7 @@ defmodule DynamoNode do
     if Map.has_key?(extra_state, client) do
       # Check If "W" acknowledgement is received
       if Map.fetch!(extra_state, client) + 1 >= node.w do
-        IO.puts("(#{whoami()}) Have enough confirmations")
+        IO.puts("(#{whoami()}) Have enough confirmations #{Map.fetch!(extra_state, client)} #{node.w} #{node.n} #{node.r}")
         send(client, :ok)
         {node,  Map.delete(extra_state, client)}
       else
@@ -277,6 +289,7 @@ defmodule DynamoNode do
         send_requests(tail, DynamoNode.PutEntry.new(key, context, value, client))
         # Store into extra state to check if received "W Quorum Request"
         extra_state = Map.put_new(extra_state, client, 0)
+        IO.puts("#{whoami} Checking Quorum Write #{Map.fetch!(extra_state, client)}")
         check_quorum_write(node, extra_state, client)
       [head | tail]->
         # If not, send the the preferred node for the given key
@@ -514,7 +527,7 @@ end
 
 
 defmodule DynamoNode.Client do
-  import Emulation, only: [send: 2]
+  import Emulation, only: [send: 2, whoami: 0]
 
   import Kernel,
     except: [spawn: 3, spawn: 1, spawn_link: 1, spawn_link: 3, send: 2]
@@ -529,8 +542,23 @@ defmodule DynamoNode.Client do
     %Client{client_id: client_id}
   end
 
+  def benchmark_client(client) do
+    IO.puts("Benchamrking client")
+    receive do
+      {pid, {:put, key, value, context, node}} ->
+        message = put_request(client, key, value, context, node)
+        IO.puts("Sending Reply Back")
+        send(pid,  message)
+        benchmark_client(client)
+        # code
+    end
+    benchmark_client(client)
+  end
+
+
   @spec check_node_status(%Client{}, atom()) :: {:fail,%Client{}} | {:ok,%Client{}}
   def check_node_status(client, node) do
+    IO.puts("Check Node Status #{whoami()}")
     send(node, :check)
     receive do
       {^node, :ok} -> {:ok,client}
@@ -557,7 +585,7 @@ defmodule DynamoNode.Client do
       {_sender, :ok} ->
         {:ok, client}
     after
-      1000 -> {:fail,client}
+      5000 -> {:fail,client}
     end
 
   end
