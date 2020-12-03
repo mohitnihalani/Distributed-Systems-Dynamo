@@ -153,7 +153,8 @@ defmodule Ring do
     end
   end
 
-  def handle_node_alive(%Ring{suspect_nodes: suspect_nodes} = ring, suspect_node) do
+  def handle_node_alive(%Ring{suspect_nodes: suspect_nodes} = ring, suspect_node, incarnation) do
+    ring = update_node_incarnation(ring, suspect_node, incarnation)
     if is_suspect_node(ring, suspect_node) do
       %{ring | suspect_nodes: Map.delete(suspect_nodes, suspect_node)}
     else

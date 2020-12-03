@@ -1,3 +1,4 @@
+"""
 defmodule DynamoNode.BenchMarks do
   import Emulation, only: [spawn: 2, send: 2, whoami: 0]
   import Kernel,
@@ -6,7 +7,7 @@ defmodule DynamoNode.BenchMarks do
     def run_put_benchmark() do
     Emulation.init()
     Emulation.append_fuzzers([Fuzzers.delay(1)])
-
+    # mix run -e "DynamoNode.BenchMarks.run_put_benchmark()"
     n = 6
     r = 3
     w = 2
@@ -23,6 +24,7 @@ defmodule DynamoNode.BenchMarks do
      end
 
     client = spawn(:client, fn -> DynamoNode.Client.benchmark_client(DynamoNode.Client.new_client(:client)) end)
+
     servers = Enum.shuffle(servers)
     alphabet = Enum.to_list(?a..?z) ++ Enum.to_list(?0..?9)
     length = 12
@@ -39,15 +41,17 @@ defmodule DynamoNode.BenchMarks do
         end
       end,
     },
-    time: 20,
+    time: 100,
     print: [
       benchmarking: true,
       configuration: true,
     ],
-    formatters: [{Benchee.Formatters.HTML, file: "put_request_27_nodes/my.html"}, Benchee.Formatters.Console],
+    formatters: [{Benchee.Formatters.HTML, file: "put_request_27_nodes/my.html"}, {Benchee.Formatters.Console, extended_statistics: true}],
     inputs: %{"input 1" => :client},
     )
+
   after
     Emulation.terminate()
   end
 end
+"""

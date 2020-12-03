@@ -130,19 +130,23 @@ defmodule DynamoNode do
     %{node | state: Ring.increment_vector_clock(node.state, whoami())}
   end
 
+  @spec add_suspect_node(%DynamoNode{}, atom(), integer()) :: %DynamoNode{}
   defp add_suspect_node(node, suspect_node, incarnation) do
     node = %{node | state: Ring.add_suspect_node(node.state, suspect_node, incarnation, now())}
     spread_suspect_gossip(node, suspect_node)
+    node
   end
 
-  defp handle_node_alive(node, suspect_node) do
-    %{node | state: Ring.handle_node_alive(node.state, suspect_node)}
+  defp handle_node_alive(node, suspect_node, incarnation) do
+    %{node | state: Ring.handle_node_alive(node.state, suspect_node, incarnation)}
   end
 
   defp handle_node_fail(node, failed_node) do
     %{node | state: Ring.remove_node(node.state, failed_node)}
   end
 
+  # Spread gossip about suspect node
+  @spec spread_suspect_gossip(%DynamoNode{}, atom()) :: no_return()
   defp spread_suspect_gossip(node, suspect_node) do
     node_list = Enum.filter(node.state.nodes, fn x -> x != whoami() end)
     node_list = Enum.shuffle(node_list) |> Enum.take(min(node.probe_count, Enum.count(node_list)))
@@ -150,11 +154,27 @@ defmodule DynamoNode do
     send_requests(node_list, DynamoNode.SuspectNode.new(suspect_node, incarnation))
   end
 
+  # Spread Gossip about node failed
+  @spec spread_suspect_gossip(%DynamoNode{}, atom()) :: no_return()
   defp spread_node_failed(node, failed_node) do
     node_list = Enum.filter(node.state.nodes, fn x -> x != whoami() end)
     send_requests(node_list, DynamoNode.NodeFailed.new(failed_node))
   end
 
+  @spec check_and_remove_suspect(%DynamoNode{}, atom()) :: %DynamoNode{}
+  defp check_and_remove_suspect(node, other_node) do
+    if Ring.is_suspect_node(node.state, other_node) do
+      incarnation = Ring.get_node_incarnation(node.state, other_node)
+      node = handle_node_alive(node, other_node, incarnation)
+      node_list = Enum.filter(node.state.nodes, fn x -> x != whoami() end)
+      send_requests(node_list, DynamoNode.NodeAlive.new(other_node, incarnation))
+      node
+    else
+      node
+    end
+  end
+
+  # Starts Indirect Probe request for the node which didn't replied
   defp start_gossip_indirect_probe(node, extra_state, random_node) do
     IO.puts("(#{whoami()}) Running Indirect Probe Request")
 
@@ -185,9 +205,8 @@ defmodule DynamoNode do
     end
 
   end
-  """
-  Method to run gossip protocol
-  """
+
+  # Run Gossip Protocol
   def run_gossip_protocol(node, extra_state) do
 
     # Filter Current Node from the list
@@ -207,8 +226,9 @@ defmodule DynamoNode do
 
           IO.puts("(#{whoami()}) Received Share State Response from (#{random_node})
           <> #{whoami()} has #{Ring.get_node_count(node.state)} and #{random_node} have #{Ring.get_node_count(otherstate)}")
-          node = %{node | state: join_states(node.state, otherstate)}
           Emulation.cancel_timer(node.ack_timer)
+          node = %{node | state: join_states(node.state, otherstate)}
+          #node = check_and_remove_suspect(node, random_node)
           node = reset_gossip_timeout(node)
           run_node(node, extra_state)
 
@@ -417,7 +437,7 @@ defmodule DynamoNode do
         IO.puts("(#{whoami()}) received Node Alive response for (#{suspect_node}) from (#{sender})")
         if Ring.get_node_incarnation(node.state, suspect_node) < other_incarnation do
           # Handle Node Alive
-          run_node(handle_node_alive(node, suspect_node), extra_state)
+          run_node(handle_node_alive(node, suspect_node, other_incarnation), extra_state)
         else
           # Old message do nothing
           run_node(node, extra_state)
