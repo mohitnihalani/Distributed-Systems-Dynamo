@@ -133,13 +133,15 @@ defmodule Ring do
   """
   Check if node is a suspect node
   """
-  def is_suspect_node(%Ring{suspect_nodes: suspect_nodes}, suspect_node) do
-    Map.has_key?(suspect_nodes, suspect_node)
+  @spec is_suspect_node(%Ring{}, atom()) :: boolean()
+  def is_suspect_node(ring, suspect_node) do
+    Map.has_key?(ring.suspect_nodes, suspect_node)
   end
 
   """
   Add node as the suspect node
   """
+  @spec add_suspect_node(%Ring{}, atom(), integer(), any()) :: %Ring{}
   def add_suspect_node(%Ring{suspect_nodes: suspect_nodes} = ring, suspect_node, incarnation, time) do
     cond do
       is_suspect_node(ring, suspect_node) && get_node_incarnation(ring, suspect_node) < incarnation ->
@@ -153,10 +155,11 @@ defmodule Ring do
     end
   end
 
-  def handle_node_alive(%Ring{suspect_nodes: suspect_nodes} = ring, suspect_node, incarnation) do
+  @spec handle_node_alive(%Ring{}, atom(), integer()) :: %Ring{}
+  def handle_node_alive(ring, suspect_node, incarnation) do
     ring = update_node_incarnation(ring, suspect_node, incarnation)
     if is_suspect_node(ring, suspect_node) do
-      %{ring | suspect_nodes: Map.delete(suspect_nodes, suspect_node)}
+      %{ring | suspect_nodes: Map.delete(ring.suspect_nodes, suspect_node)}
     else
       ring
     end
