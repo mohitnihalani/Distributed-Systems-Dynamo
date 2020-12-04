@@ -10,7 +10,7 @@ defmodule DynamoNode.Entry do
     key: nil
   )
   @doc """
-  Create a new RequestVoteResponse.
+  Create a new Entry
   """
   def new(key, context, value) do
     %Entry{context: context, value: value, key: key}
@@ -29,8 +29,8 @@ defmodule DynamoNode.KV do
     %KV{db: %{}}
   end
 
-  @spec put(%KV{}, non_neg_integer(), any(), any(), any()) :: %KV{}
-  def put(kv, version, key, context, value) do
+  @spec put(%KV{}, any(), any(), any()) :: %KV{}
+  def put(kv, key, context, value) do
     #TODO
     # Put the given key
     # Replace the current context of the sender in the vector clock with the correct version
@@ -42,6 +42,22 @@ defmodule DynamoNode.KV do
       %{kv | db: Map.put(kv.db, key, %{entry | value: value, context: context})}
     else
       #TODO put new
+      entry = DynamoNode.Entry.new(key, context, value)
+      %{kv | db: Map.put_new(kv.db, key, entry)}
+    end
+  end
+
+  @spec put(%KV{}, atom(), integer(), any(), map(), any()) :: %KV{}
+  def put(kv, proc, version, key, context, value) do
+    if Map.has_key?(kv.db, key) do
+      #TODO Update Context Using Vector Clock
+      context = VectorClock.update_vector_clock(proc, context, version)
+      entry = Map.get(kv.db, key)
+      %{kv | db: Map.put(kv.db, key, %{entry | value: value, context: context})}
+    else
+      #TODO put new
+      context = %{}
+      context = VectorClock.update_vector_clock(proc, context, version)
       entry = DynamoNode.Entry.new(key, context, value)
       %{kv | db: Map.put_new(kv.db, key, entry)}
     end

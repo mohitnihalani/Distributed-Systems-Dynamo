@@ -110,6 +110,7 @@ defmodule DynamoNode do
     # Compare vector clocks to find most recent state
     # After that call join_ring(state, otherstate) with otherstate as most recent state
     # Make sure you update state at the call with the new ring
+    state = Ring.find_updated_state(state, otherstate)
     updated_ring = join_states(state, otherstate)
     send(sender, DynamoNode.ShareStateResponse.new(updated_ring))
     updated_ring
@@ -289,9 +290,16 @@ defmodule DynamoNode do
     end
   end
 
-  def add_entry_to_db(node, key, context, value) do
+  @spec add_entry_to_db(%DynamoNode{}, any(), map(), any(), boolean()) :: %DynamoNode{}
+  def add_entry_to_db(node, key, context, value, coordinator) do
     #TODO Add vector clocks to add the version
-    %{node | kv: DynamoNode.KV.put(node.kv, node.version, key, context, value)}
+    version = Ring.get_node_version(node.state, whoami())
+    if coordinator do
+      %{node | kv: DynamoNode.KV.put(node.kv, whoami(), version, key, context, value)}
+    else
+      %{node | kv: DynamoNode.KV.put(node.kv, key, context, value)}
+    end
+
   end
 
   """
@@ -305,7 +313,7 @@ defmodule DynamoNode do
     case preference_list do
       [^pid | tail]->
         # If Coordinator Node, store and send to other nodes
-        node = add_entry_to_db(node, key, context, value)
+        node = add_entry_to_db(node, key, context, value, true)
         send_requests(tail, DynamoNode.PutEntry.new(key, context, value, client))
         # Store into extra state to check if received "W Quorum Request"
         extra_state = Map.put_new(extra_state, client, 0)
@@ -485,7 +493,7 @@ defmodule DynamoNode do
         IO.puts("(#{whoami()}) received Put Entry Request from (#{sender}) <> #{key}")
         # Handle Put Entry for replication
         #TODO
-        node = add_entry_to_db(node, key, context, value)
+        node = add_entry_to_db(node, key, context, value, false)
         send(sender, DynamoNode.PutEntryResponse.new(key, :ok, client))
         run_node(node, extra_state)
 
