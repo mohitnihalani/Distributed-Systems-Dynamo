@@ -9,10 +9,10 @@ defmodule VectorClock do
   require Fuzzers
   require Logger
 
-  defstruct(vector_clock: %{}) 
+  defstruct(vector_clock: %{})
 
   @doc """
-  Return a new `vector_clock` set 
+  Return a new `vector_clock` set
   to the supplied value.
   """
   @spec new_vector(map()) :: %VectorClock{}
@@ -51,6 +51,24 @@ defmodule VectorClock do
   @spec update_vector_clock(atom(), map()) :: map()
   def update_vector_clock(proc, clock) do
     Map.update(clock, proc, 0, &(&1 + 1))
+  end
+
+  @spec update_vector_clock(atom(), map(), integer()) :: map()
+  def update_vector_clock(proc, clock, value) do
+    if Map.has_key?(clock, proc) do
+      Map.replace(clock, proc, value)
+    else
+      Map.put_new(clock, proc, value)
+    end
+  end
+
+  @spec get_node_version(atom(), map()) :: integer()
+  def get_node_version(proc, clock) do
+    if Map.has_key?(clock, proc) do
+      Map.fetch(clock, proc)
+    else
+      -1
+    end
   end
 
   @before :before

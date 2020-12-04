@@ -23,7 +23,9 @@ defmodule Ring do
   def new() do
     # TODO
     # Initialize vector clock
-    %Ring{ring: :gb_trees.empty , nodes: MapSet.new(), suspect_nodes: %{}}
+    vector_clock = Map.new()
+    vector_clock = Map.put_new(vector_clock, whoami(), 0)
+    %Ring{ring: :gb_trees.empty , nodes: MapSet.new(), suspect_nodes: %{}, vector_clock: vector_clock}
   end
 
   @spec new(atom()) :: %Ring{}
@@ -105,12 +107,15 @@ defmodule Ring do
     end
   end
 
-  def increment_vector_clock(ring, node) do
+  @spec increment_vector_clock(%Ring{}, atom()) :: %Ring{}
+  def increment_vector_clock(%Ring{vector_clock: clock}=ring, proc) do
     #TODO
-    ring
+    %{ring | vector_clock: VectorClock.update_vector_clock(proc, clock)}
   end
-  def get_node_version(ring, node) do
-    0
+
+  @spec get_node_version(%Ring{}, atom()) :: integer()
+  def get_node_version(%Ring{vector_clock: clock}, proc) do
+    VectorClock.get_node_version(proc, clock)
   end
 
   def get_node_incarnation(ring, node) do
@@ -120,10 +125,11 @@ defmodule Ring do
     get_node_version(ring, node)
   end
 
-  def update_node_version(%Ring{vector_clock: version} = ring, node, incarnation) do
+  @spec update_node_version(%Ring{}, atom(), integer()) :: %Ring{}
+  def update_node_version(%Ring{vector_clock: version} = ring, proc, incarnation) do
     #TODO
     # Call vector clock to update version for this node
-
+    %{ring | vector_clock: VectorClock.update_vector_clock(proc,version, incarnation)}
   end
 
   def update_node_incarnation(ring, node, incarnation) do
@@ -155,6 +161,22 @@ defmodule Ring do
     end
   end
 
+  @doc """
+  Take 2 states and find the most updated state
+  Helpful while merging state
+  """
+  @spec find_updates_state(%Ring{}, %Ring{}) :: %Ring{}
+  def find_updated_state(%Ring{vector_clock: clock1} = ring1, %Ring{vector_clock: clock2} = ring2) do
+    case VectorClock.compare_vectors(clock1, clock2) do
+      :before ->
+        ring1
+      :hafter ->
+        ring2
+      :concurrent ->
+        ring1
+    end
+  end
+
   @spec handle_node_alive(%Ring{}, atom(), integer()) :: %Ring{}
   def handle_node_alive(ring, suspect_node, incarnation) do
     ring = update_node_incarnation(ring, suspect_node, incarnation)
@@ -182,9 +204,10 @@ defmodule Ring do
 
     # TODO
     # Sync Version Vector
-    version = nil
+    version = VectorClock.combine_vector_clocks(version1, version2)
     %Ring{ring: tree, nodes: MapSet.union(nodes1, nodes2), vector_clock: version}
   end
+
   @spec get_nodes_list(%Ring{}) :: MapSet
   def get_nodes_list(%Ring{nodes: nodes}) do
       nodes
