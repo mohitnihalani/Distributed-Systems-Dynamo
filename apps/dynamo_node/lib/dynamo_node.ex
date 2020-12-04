@@ -104,12 +104,6 @@ defmodule DynamoNode do
 
   @spec handle_share_state_request(%Ring{}, {atom(), %Ring{}}) :: %Ring{}
   defp handle_share_state_request(state, {sender, otherstate}) do
-    # Find Better Version
-    # Vector clock is inside %Ring{ring: ring, version: vectorclock()}
-    # TODO
-    # Compare vector clocks to find most recent state
-    # After that call join_ring(state, otherstate) with otherstate as most recent state
-    # Make sure you update state at the call with the new ring
     state = Ring.find_updated_state(state, otherstate)
     updated_ring = join_states(state, otherstate)
     send(sender, DynamoNode.ShareStateResponse.new(updated_ring))

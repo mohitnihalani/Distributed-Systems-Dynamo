@@ -165,7 +165,7 @@ defmodule Ring do
   Take 2 states and find the most updated state
   Helpful while merging state
   """
-  @spec find_updates_state(%Ring{}, %Ring{}) :: %Ring{}
+  @spec find_updated_state(%Ring{}, %Ring{}) :: %Ring{}
   def find_updated_state(%Ring{vector_clock: clock1} = ring1, %Ring{vector_clock: clock2} = ring2) do
     case VectorClock.compare_vectors(clock1, clock2) do
       :before ->
