@@ -7,6 +7,7 @@ defmodule DynamoNode do
   require Logger
 
   require Ring
+
   """
   Dynamo Node
   Each node has it's view of the state, which basically means each node has its own ring
@@ -34,13 +35,13 @@ defmodule DynamoNode do
 
     # Gossip Protocol
     heartbeat_timer: nil,
-    heartbeat_timeout: 2000,
+    heartbeat_timeout: 1000,
     probe_timer: nil,
     probe_timeout: 1000,
-    fail_timeout: 4000,
+    fail_timeout: 2000,
     probe_count: 5,
     ack_timer: nil,
-    ack_timeout: 500,
+    ack_timeout: 200,
     suspect_nodes: Map.new(),
     failed_nodes: MapSet.new(),
 
@@ -378,7 +379,7 @@ defmodule DynamoNode do
       {values, count} = Map.get(extra_state.get, client)
       extra_state = %{extra_state | get: Map.put(extra_state.get, client, {merge_conflicting_version(values,entry), count + 1})}
       if count + 1 >= node.r do
-        IO.puts("(#{whoami}) Quorum Level Reached, sending to client")
+        IO.puts("(#{whoami()}) Have enough confirmations for Get request")
         {merged_values, merged_context} = prepare_entry_for_client(values)
         send(client, {merged_values, merged_context})
         extra_state = %{extra_state | get: Map.delete(extra_state.get, client)}
@@ -763,13 +764,13 @@ defmodule DynamoNode.Client do
         {:ok, {client, values, contexts}}
 
     after
-      5000 -> {:fail,client}
+      2_000 -> {:fail,client}
     end
   end
 
   def temp_fail_node(client, node) do
     IO.puts("Client Temp Failing Node (#{node})")
-    send(node, {:temp_fail, 10000})
+    send(node, {:temp_fail, 10_000})
     client
   end
 
