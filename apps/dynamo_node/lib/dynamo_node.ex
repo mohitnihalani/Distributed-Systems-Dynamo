@@ -247,14 +247,15 @@ defmodule DynamoNode do
   end
 
   def check_quorum_write(node, extra_state, client) do
-    if Map.has_key?(extra_state, client) do
+    if Map.has_key?(extra_state.put, client) do
       # Check If "W" acknowledgement is received
-      if Map.fetch!(extra_state, client) + 1 >= node.w do
-        IO.puts("(#{whoami()}) Have enough confirmations #{Map.fetch!(extra_state, client)} #{node.w} #{node.n} #{node.r}")
+      extra_state = %{extra_state | put: Map.put(extra_state.put, client, Map.get(extra_state.put, client, 0) + 1)}
+      if Map.get(extra_state.put, client, 0) >= node.w do
+        IO.puts("(#{whoami()}) Have enough confirmations for get request #{Map.fetch!(extra_state.put, client)} #{node.w} #{node.n} #{node.r}")
         send(client, :ok)
-        {node,  Map.delete(extra_state, client)}
+        extra_state = %{extra_state | put: Map.delete(extra_state.put, client)}
+        {node, extra_state}
       else
-        extra_state = Map.put(extra_state, client, Map.fetch!(extra_state, client) + 1)
         {node, extra_state}
       end
     else
@@ -263,37 +264,102 @@ defmodule DynamoNode do
     end
   end
 
-  def merge_conflicting_version(versions) do
-    # TODO Merge Context
+
+  """
+  comparison = VectorClock.compare_vectors(v.context, entry.context)
+          if v.value == entry.value do
+            case comparison do
+              :before ->
+                {acc, [:before | acc1]}
+              :after ->
+                {[v | acc], [:after]}
+              _ ->
+                {[v | acc], [:concurrent]}
+            end
+          else
+            case compar do
+              :before ->
+                {acc, [:before | acc1]}
+              :after or :concurrent ->
+                {[v | acc], [:after]}
+              :conflict->
+                {[v | acc], [:conflict]}
+            end
+          end
+
+  """
+
+  @spec merge_conflicting_version(list(%DynamoNode.Entry{}) | list(), %DynamoNode.Entry{}) :: list(%DynamoNode.Entry{})
+  def merge_conflicting_version(versions, entry) do
+    if Enum.count(versions) == 0 do
+      [entry | versions]
+    else
+      {new_version, compare_results} = Enum.reduce(versions, {[],[]}, fn v,{acc, acc1} ->
+        comparison = VectorClock.compare_vectors(v.context, entry.context)
+        if v.value == entry.value do
+          case comparison do
+            :before ->
+              {acc, [:before | acc1]}
+            :after ->
+              {[v | acc], [:after]}
+            _ ->
+              {[v | acc], [:concurrent]}
+          end
+        else
+          case comparison do
+            :before ->
+              {acc, [:before | acc1]}
+            :after ->
+              {[v | acc], [:after]}
+            _ ->
+              {[v | acc], [:conflict]}
+          end
+        end
+      end)
+
+      if Enum.any?(compare_results, fn x -> x == :before || x == :conflict end) do
+        [entry | new_version]
+      else
+        new_version
+      end
+    end
   end
 
+  @spec prepare_entry_for_client(list()) :: {list(), list()}
+  defp prepare_entry_for_client(versions) do
+    Enum.reduce(versions, {[], []}, fn entry, {values, contexts} -> {[entry.value | values], [entry.context | contexts]} end)
+  end
+
+  @spec check_quorum_read(%DynamoNode{}, any(), atom(), %DynamoNode.Entry{}) :: {%DynamoNode{}, any()}
   def check_quorum_read(node, extra_state, client, entry) do
-    if Map.has_key?(extra_state, client) do
-      if Enum.count(Map.get(extra_state, client, []) + 1 >= node.r) do
-        # TODO Merge Context
-        {merged_values, merged_context} = merge_conflicting_version(Map.get(extra_state, client))
+    if Map.has_key?(extra_state.get, client) do
+      {values, count} = Map.get(extra_state.get, client)
+      extra_state = %{extra_state | get: Map.put(extra_state.get, client, {merge_conflicting_version(values,entry), count + 1})}
+      if count + 1 >= node.r do
+        IO.puts("#{whoami} Quorum Level Reached, sending to client")
+        IO.inspect(Map.get(extra_state.get, client))
+        {merged_values, merged_context} = prepare_entry_for_client(values)
         send(client, {merged_values, merged_context})
-        {node,  Map.delete(extra_state, client)}
+        extra_state = %{extra_state | get: Map.delete(extra_state.get, client)}
+        {node,extra_state}
       else
-        extra_state = Map.put(extra_state, client, [entry | Map.get(extra_state, client, [])])
         {node, extra_state}
       end
     else
-      # Probably already send the acknowledgement
       {node, extra_state}
     end
   end
 
-  @spec add_entry_to_db(%DynamoNode{}, any(), map(), any(), boolean()) :: %DynamoNode{}
-  def add_entry_to_db(node, key, context, value, coordinator) do
+  @spec add_entry_to_db(%DynamoNode{}, any(), map(), any()) :: %DynamoNode{}
+  def add_entry_to_db(node, key, context, value) do
     #TODO Add vector clocks to add the version
     version = Ring.get_node_version(node.state, whoami())
-    if coordinator do
-      %{node | kv: DynamoNode.KV.put(node.kv, whoami(), version, key, context, value)}
-    else
-      %{node | kv: DynamoNode.KV.put(node.kv, key, context, value)}
-    end
+    %{node | kv: DynamoNode.KV.put(node.kv, whoami(), version, key, context, value)}
+  end
 
+  @spec replicate_entry_to_db(%DynamoNode{}, any(), %DynamoNode.Entry{}) :: %DynamoNode{}
+  def replicate_entry_to_db(node, key, entry) do
+    %{node | kv: DynamoNode.KV.put(node.kv, key, entry)}
   end
 
   """
@@ -307,11 +373,11 @@ defmodule DynamoNode do
     case preference_list do
       [^pid | tail]->
         # If Coordinator Node, store and send to other nodes
-        node = add_entry_to_db(node, key, context, value, true)
-        send_requests(tail, DynamoNode.PutEntry.new(key, context, value, client))
+        node = add_entry_to_db(node, key, context, value)
+        send_requests(tail, DynamoNode.PutEntry.new(key, DynamoNode.KV.get(node.kv, key), client))
         # Store into extra state to check if received "W Quorum Request"
-        extra_state = Map.put_new(extra_state, client, 0)
-        IO.puts("#{whoami} Checking Quorum Write #{Map.fetch!(extra_state, client)}")
+        extra_state = %{extra_state | put: Map.put_new(extra_state.put, client, 0)}
+        IO.puts("#{whoami} Checking Quorum Write #{Map.fetch!(extra_state.put, client)}")
         check_quorum_write(node, extra_state, client)
       [head | tail]->
         # If not, send the the preferred node for the given key
@@ -327,6 +393,7 @@ defmodule DynamoNode do
   """
   Handling get request
   """
+  @spec handle_get_request(%DynamoNode{},any(), atom(), any()) :: {%DynamoNode{}, any()}
   defp handle_get_request(node, extra_state, client, key) do
       # Get the preferred list
       preference_list = get_preference_list(node.state, key, node.n)
@@ -337,6 +404,7 @@ defmodule DynamoNode do
         [^pid | tail]->
           # I am the coordinator node, get from the database and ask other nodes
           entry = DynamoNode.KV.get(node.kv, key)
+          extra_state = %{extra_state | get: Map.put_new(extra_state.get, client, {[], 0})}
           case entry do
             :noentry ->
               # Noentry can happen, when client saved this request to server A,
@@ -345,16 +413,14 @@ defmodule DynamoNode do
               # the servers in the ring
               node_list = Enum.filter(node.state.nodes, fn x -> x != whoami() end)
               send(node_list, DynamoNode.GetEntry.new(key, client))
+
               {node, extra_state}
 
             %DynamoNode.Entry{key: ^key} ->
               send_requests(tail, DynamoNode.GetEntry.new(key, client))
               # This is needed for "R = 1".
-              extra_state = Map.put_new(extra_state, client, [entry])
-              check_quorum_read(node, extra_state, client, extra_state)
-            true ->
-              #TODO Think about what to do if the entry is not present in the db
-              {node, extra_state}
+              #node, extra_state, client, entry
+              check_quorum_read(node, extra_state, client, entry)
           end
         [head | tail] ->
           IO.puts("#{whoami} Redirecting Get Request for key <> #{key} to #{head}")
@@ -372,7 +438,7 @@ defmodule DynamoNode do
     IO.puts("Launching node #{whoami()}")
     node = reset_gossip_timeout(node)
     IO.puts(Ring.get_node_count(node.state))
-    run_node(node, %{})
+    run_node(node, %{get: %{},put:  %{}})
   end
 
   """
@@ -456,7 +522,7 @@ defmodule DynamoNode do
         # Handle  GetEntry for replication
         # TODO
         entry = DynamoNode.KV.get(node.kv, key)
-        send(sender, DynamoNode.GetEntryResponse.new(client, entry, key))
+        send(sender, DynamoNode.GetEntryResponse.new(key, client, entry))
         run_node(node, extra_state)
 
       {sender, %DynamoNode.GetEntryResponse{
@@ -471,31 +537,27 @@ defmodule DynamoNode do
         case entry do
           :noentry ->
             run_node(node, extra_state)
-          true ->
+          _ ->
             {node, extra_state} = check_quorum_read(node, extra_state, client, entry)
             run_node(node, extra_state)
         end
 
       # ---------------  Handle Put Request -----------------------------#
       {sender, %DynamoNode.PutEntry{
-        context: context,
-        value: value,
+        entry: entry,
         key: key,
         client: client
       }} ->
 
         IO.puts("(#{whoami()}) received Put Entry Request from (#{sender}) <> #{key}")
         # Handle Put Entry for replication
-        #TODO
-        node = add_entry_to_db(node, key, context, value, false)
+        node = replicate_entry_to_db(node, key, entry)
         send(sender, DynamoNode.PutEntryResponse.new(key, :ok, client))
         run_node(node, extra_state)
 
       # Put Entry Response from the other node
       {sender, %DynamoNode.PutEntryResponse{ack: ack, key: key, client: client}} ->
         # Handle Put Entry for response for the replication
-        #TODO
-
         IO.puts("(#{whoami()}) received Put Entry Response from (#{sender}) <> #{key}")
         {node, extra_state} = check_quorum_write(node, extra_state, client)
         run_node(node, extra_state)
@@ -516,6 +578,8 @@ defmodule DynamoNode do
       # Get Request for the client
       {sender, {:redirect_get, {client, key}}} ->
         #TODO Handle Client Request
+        IO.puts("#{whoami} Received redirected get Request for key: #{key}")
+        {node, extra_state} = handle_get_request(node, extra_state, client, key)
         run_node(node, extra_state)
 
       # ---------------  Handle Client Request -----------------------------#
@@ -530,6 +594,9 @@ defmodule DynamoNode do
       # Get Request for the client
       {sender, {:get, key}} ->
         #TODO Handle Client Request
+        #node, extra_state, client, key
+        IO.puts("(#{whoami()}) received Get Entry from client for #{key}")
+        {node, extra_state} = handle_get_request(node, extra_state, sender, key)
         run_node(node, extra_state)
 
       # --------------- Testing ---------------------------------------- #
@@ -612,7 +679,15 @@ defmodule DynamoNode.Client do
 
   end
 
-  def get(client, key, node) do
+  def get_request(client, key, node) do
+    IO.puts("Get Request for key")
+    send(node, {:get, key})
+    receive do
+      {_sender, {values, contexts}} ->
+        {:ok, {client, values, contexts}}
 
+    after
+      5000 -> {:fail,client}
+    end
   end
 end

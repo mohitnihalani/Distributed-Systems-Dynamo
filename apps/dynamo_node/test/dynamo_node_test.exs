@@ -174,4 +174,50 @@ defmodule DynamoNodeTest do
     Emulation.terminate()
   end
 
+
+  test "Test Simple Put Request" do
+    Emulation.init()
+    Emulation.append_fuzzers([Fuzzers.delay(2)])
+
+    spawn(:a, fn -> DynamoNode.lauch_node(DynamoNode.init()) end)
+    spawn(:b, fn -> DynamoNode.lauch_node(DynamoNode.init(:a)) end)
+    spawn(:c, fn -> DynamoNode.lauch_node(DynamoNode.init(:b)) end)
+    spawn(:d, fn -> DynamoNode.lauch_node(DynamoNode.init(:c)) end)
+    caller = self()
+    client = spawn(:c1, fn ->
+      client = DynamoNode.Client.new_client(:c1)
+      assert DynamoNode.Client.check_node_status(client, :a) == {:ok, client}
+      assert DynamoNode.Client.check_node_status(client, :b) == {:ok, client}
+      assert DynamoNode.Client.check_node_status(client, :c) == {:ok, client}
+      assert DynamoNode.Client.check_node_status(client, :d) == {:ok, client}
+
+       # Give things a bit of time to settle down.
+       receive do
+       after
+         10_000 -> :ok
+       end
+
+      assert DynamoNode.Client.put_request(client, "foo", 200, nil, :b) == {:ok, client}
+
+      case DynamoNode.Client.get_request(client, "foo", :c) do
+        {:ok, data} ->
+          IO.inspect(data)
+          assert true
+        _ -> assert false
+      end
+
+    end)
+
+    handle = Process.monitor(client)
+    # Timeout.
+    receive do
+      {:DOWN, ^handle, _, _, _} -> true
+    after
+      30_000 -> assert false
+    end
+
+  after
+    Emulation.terminate()
+  end
+
 end

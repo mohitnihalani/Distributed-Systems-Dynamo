@@ -29,33 +29,18 @@ defmodule DynamoNode.KV do
     %KV{db: %{}}
   end
 
-  @spec put(%KV{}, any(), any(), any()) :: %KV{}
-  def put(kv, key, context, value) do
-    #TODO
-    # Put the given key
-    # Replace the current context of the sender in the vector clock with the correct version
-    # i.e if key = foo, value = 200, sender = :a, current_Version = 4, context = [(:a, 1)]
-    # then new put should be context = [(:a, 5)]
-    if Map.has_key?(kv.db, key) do
-      #TODO Update Context Using Vector Clock
-      entry = Map.get(kv.db, key)
-      %{kv | db: Map.put(kv.db, key, %{entry | value: value, context: context})}
-    else
-      #TODO put new
-      entry = DynamoNode.Entry.new(key, context, value)
-      %{kv | db: Map.put_new(kv.db, key, entry)}
-    end
+  def put(kv, key, entry) do
+    %{kv | db: Map.put(kv.db, key, entry)}
   end
 
   @spec put(%KV{}, atom(), integer(), any(), map(), any()) :: %KV{}
   def put(kv, proc, version, key, context, value) do
     if Map.has_key?(kv.db, key) do
-      #TODO Update Context Using Vector Clock
       context = VectorClock.update_vector_clock(proc, context, version)
+
       entry = Map.get(kv.db, key)
       %{kv | db: Map.put(kv.db, key, %{entry | value: value, context: context})}
     else
-      #TODO put new
       context = %{}
       context = VectorClock.update_vector_clock(proc, context, version)
       entry = DynamoNode.Entry.new(key, context, value)
@@ -69,6 +54,7 @@ defmodule DynamoNode.KV do
     # Return Key for the given value
     Map.get(kv.db, key, :noentry)
   end
+
 end
 
 defmodule DynamoNode.PutEntry do
@@ -79,16 +65,16 @@ defmodule DynamoNode.PutEntry do
   """
   alias __MODULE__
 
-  @enforce_keys [:context, :key, :value, :client]
+  @enforce_keys [:key, :entry, :client]
   defstruct(
-    context: nil, # Vector Clock
-    value: nil,
+    entry: nil,
     key: nil,
     client: nil
   )
 
-  def new(key, context, value, client) do
-    %PutEntry{context: context, value: value, key: key, client: client}
+  @spec new(any(), %DynamoNode.Entry{}, atom()) :: %PutEntry{}
+  def new(key, entry, client) do
+    %PutEntry{entry: entry, key: key, client: client}
   end
 end
 
