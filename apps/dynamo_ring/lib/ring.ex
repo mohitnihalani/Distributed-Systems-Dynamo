@@ -169,8 +169,8 @@ defmodule Ring do
     update_node_incarnation(ring, suspect_node, incarnation)
   end
 
-  @spec sync_rings(%Ring{}, %Ring{}) :: %Ring{}
-  def sync_rings(%Ring{ring: ring1, nodes: nodes1, vector_clock: version1}, %Ring{ring: ring2, nodes: nodes2, vector_clock: version2}) do
+  @spec sync_rings(%Ring{}, %Ring{}, MapSet) :: %Ring{}
+  def sync_rings(%Ring{ring: ring1, nodes: nodes1, vector_clock: version1}, %Ring{ring: ring2, nodes: nodes2, vector_clock: version2}, failed_nodes) do
     tree1 =:gb_trees.to_list(ring1)
     |> Enum.map(fn {key, value} -> {key, value} end)
     |> Enum.into(%{})
@@ -178,10 +178,12 @@ defmodule Ring do
 
     tree2 =:gb_trees.to_list(ring2)
     |> Enum.map(fn {key, value} -> {key, value} end)
+    |> Enum.filter(fn {key, value} -> !MapSet.member?(failed_nodes, key) end)
     |> Enum.into(%{})
 
     tree = Map.merge(tree1, tree2)
     |> Map.to_list()
+    |> Enum.filter(fn {key, value} -> !MapSet.member?(failed_nodes, key) end)
     |> :gb_trees.from_orddict()
 
     # TODO
