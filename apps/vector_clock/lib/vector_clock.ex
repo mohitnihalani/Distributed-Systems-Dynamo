@@ -65,7 +65,7 @@ defmodule VectorClock do
   @spec get_node_version(atom(), map()) :: integer()
   def get_node_version(proc, clock) do
     if Map.has_key?(clock, proc) do
-      Map.fetch(clock, proc)
+      Map.get(clock, proc)
     else
       -1
     end
@@ -109,7 +109,7 @@ defmodule VectorClock do
   Returns @hafter if v2 happened before v1.
   Returns @concurrent if neither of the above hold.
   """
-  @spec compare_vectors(map(), map()) :: :before | :after | :concurrent
+  @spec compare_vectors(map(), map()) :: :before | :after | :concurrent | :conflict
   def compare_vectors(v1, v2) do
     # First make the vectors equal length.
     v1 = make_vectors_equal_length(v1, v2)
@@ -123,11 +123,19 @@ defmodule VectorClock do
         Map.merge(v1, v2, fn _k, c1, c2 -> compare_component(c1, c2) end)
       )
 
+    smaller = Enum.any?(compare_result, fn x -> x == :before end)
+    greater = Enum.any?(compare_result, fn x -> x == :after end)
+    allConcurrent = Enum.all?(compare_result, fn x -> x == :concurrent end)
+
     cond do
-      Enum.any?(compare_result, fn x -> x == @concurrent end) -> @concurrent
-      Enum.all?(compare_result, fn x -> x == @before end) -> @before
-      Enum.all?(compare_result, fn x -> x == @hafter end) -> @hafter
-      true -> @concurrent
+      allConcurrent ->
+        :concurrent
+      (smaller and greater) ->
+        :conflict
+      smaller ->
+        :before
+      greater ->
+        :after
     end
   end
 

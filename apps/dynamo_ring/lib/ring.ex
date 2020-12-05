@@ -170,9 +170,9 @@ defmodule Ring do
     case VectorClock.compare_vectors(clock1, clock2) do
       :before ->
         ring1
-      :hafter ->
+      :after ->
         ring2
-      :concurrent ->
+      _ ->
         ring1
     end
   end
