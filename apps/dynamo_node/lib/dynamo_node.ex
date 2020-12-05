@@ -42,6 +42,7 @@ defmodule DynamoNode do
     ack_timer: nil,
     ack_timeout: 500,
     suspect_nodes: Map.new(),
+    failed_nodes: MapSet.new(),
 
     # For Quorum
     n: 3, # (N,R,W) for quorum
@@ -104,18 +105,18 @@ defmodule DynamoNode do
     save_heartbeat_timer(node, Emulation.timer(node.heartbeat_timeout))
   end
 
-  @spec handle_share_state_request(%Ring{}, {atom(), %Ring{}}) :: %Ring{}
-  defp handle_share_state_request(state, {sender, otherstate}) do
+  @spec handle_share_state_request(%Ring{}, {atom(), %Ring{}}, MapSet) :: %Ring{}
+  defp handle_share_state_request(state, {sender, otherstate}, failed_nodes) do
     state = Ring.find_updated_state(state, otherstate)
-    updated_ring = join_states(state, otherstate)
+    updated_ring = join_states(state, otherstate, failed_nodes)
     send(sender, DynamoNode.ShareStateResponse.new(updated_ring))
     updated_ring
   end
 
-  @spec join_states(%Ring{}, %Ring{}) :: %Ring{}
-  def join_states(state, otherstate) do
+  @spec join_states(%Ring{}, %Ring{}, MapSet) :: %Ring{}
+  def join_states(state, otherstate, failed_nodes) do
     # Synch both hash rings
-    Ring.sync_rings(state, otherstate)
+    Ring.sync_rings(state, otherstate, failed_nodes)
   end
 
   """
@@ -164,7 +165,7 @@ defmodule DynamoNode do
 
   @spec handle_node_fail(%DynamoNode{}, atom()) :: %DynamoNode{}
   defp handle_node_fail(node, failed_node) do
-    node = %{node | state: Ring.remove_node(node.state, failed_node)}
+    node = %{node | state: Ring.remove_node(node.state, failed_node), failed_nodes: MapSet.put(node.failed_nodes, failed_node)}
     if is_suspect_node(node.suspect_nodes, failed_node) do
       %{node | suspect_nodes: Map.delete(node.suspect_nodes, failed_node)}
     else
@@ -287,7 +288,7 @@ defmodule DynamoNode do
           IO.puts("(#{whoami()}) Received Share State Response from (#{random_node})
           <> #{whoami()} has #{Ring.get_node_count(node.state)} and #{random_node} have #{Ring.get_node_count(otherstate)}")
           Emulation.cancel_timer(node.ack_timer)
-          node = %{node | state: join_states(node.state, otherstate)}
+          node = %{node | state: join_states(node.state, otherstate, node.failed_nodes)}
           node = check_and_remove_suspect(node, random_node)
           node = reset_gossip_timeout(node)
           run_node(node, extra_state)
@@ -451,9 +452,9 @@ defmodule DynamoNode do
               # but currenty this entry is handled by server B, during joining of ring,
               # B didn't have this entry in it's database so it asks for the given entry to all
               # the servers in the ring
+              IO.puts("#{whoami()} Don't have entry for key <> #{key}, multicasting to other nodes")
               node_list = Enum.filter(node.state.nodes, fn x -> x != whoami() end)
-              send(node_list, DynamoNode.GetEntry.new(key, client))
-
+              send_requests(node_list, DynamoNode.GetEntry.new(key, client))
               {node, extra_state}
 
             %DynamoNode.Entry{key: ^key} ->
@@ -502,8 +503,12 @@ defmodule DynamoNode do
       {sender, %DynamoNode.ShareStateRequest{state: otherstate}} ->
         IO.puts("#{whoami()} (#{Ring.get_node_count(node.state)}) Received Share State request from #{sender} (#{Ring.get_node_count(otherstate)})")
 
-        node = %{node | state: handle_share_state_request(node.state, {sender, otherstate})}
-        run_node(node, extra_state)
+        if MapSet.member?(node.failed_nodes, sender) do
+          run_node(node, extra_state)
+        else
+          node = %{node | state: handle_share_state_request(node.state, {sender, otherstate},node.failed_nodes)}
+          run_node(node, extra_state)
+        end
         # code
 
       {sender, %DynamoNode.ShareStateResponse{
@@ -729,6 +734,17 @@ defmodule DynamoNode.Client do
   @spec put_request(%Client{}, any(), any(), any(), atom()) :: {:ok | :fail, %Client{}}
   def put_request(client, key, value, context, node) do
     IO.puts(key)
+    send(node, {:put, {key, value, context}})
+    receive do
+      {_sender, :ok} ->
+        {:ok, client}
+    after
+      5000 -> {:fail,client}
+    end
+  end
+
+  @spec put_request_node(%Client{}, any(), any(), any(), atom()) :: {:ok | :fail, %Client{}, atom()}
+  def put_request_node(client, key, value, context, node) do
     send(node, {:put, {key, value, context}})
     receive do
       {sender, :ok} ->
