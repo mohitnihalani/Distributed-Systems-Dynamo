@@ -175,7 +175,7 @@ defmodule DynamoNodeTest do
   end
 
 
-  test "Test Simple Put Request" do
+  test "Test Simple Get Request" do
     Emulation.init()
     Emulation.append_fuzzers([Fuzzers.delay(2)])
 
@@ -199,13 +199,12 @@ defmodule DynamoNodeTest do
 
       assert DynamoNode.Client.put_request(client, "foo", 200, nil, :b) == {:ok, client}
 
-      case DynamoNode.Client.get_request(client, "foo", :c) do
-        {:ok, data} ->
-          IO.inspect(data)
-          assert true
-        _ -> assert false
-      end
+      {:ok, {_, [200 | _tail ], [vhead | _vtail]}} = DynamoNode.Client.get_request(client, "foo", :c)
 
+      assert DynamoNode.Client.put_request(client, "foo", 10, vhead, :b) == {:ok, client}
+      {:ok, {_, [value | _ ], [vhead | vtail]}} = DynamoNode.Client.get_request(client, "foo", :c)
+
+      assert value == 10
     end)
 
     handle = Process.monitor(client)
@@ -214,6 +213,78 @@ defmodule DynamoNodeTest do
       {:DOWN, ^handle, _, _, _} -> true
     after
       30_000 -> assert false
+    end
+
+  after
+    Emulation.terminate()
+  end
+
+  test "Test Get with increase R request" do
+    Emulation.init()
+    Emulation.append_fuzzers([Fuzzers.delay(2)])
+
+    n = 5
+    r = 3
+    w = 2
+    spawn(:a, fn -> DynamoNode.lauch_node(DynamoNode.init(n, r, w)) end)
+    spawn(:b, fn -> DynamoNode.lauch_node(DynamoNode.init(:a, n, r, w)) end)
+    spawn(:c, fn -> DynamoNode.lauch_node(DynamoNode.init(:b, n, r, w)) end)
+    spawn(:d, fn -> DynamoNode.lauch_node(DynamoNode.init(:c, n, r, w)) end)
+    spawn(:e, fn -> DynamoNode.lauch_node(DynamoNode.init(:b, n, r, w)) end)
+    spawn(:f, fn -> DynamoNode.lauch_node(DynamoNode.init(:c, n, r, w)) end)
+
+    caller = self()
+    client = spawn(:c1, fn ->
+      client = DynamoNode.Client.new_client(:c1)
+      assert DynamoNode.Client.check_node_status(client, :a) == {:ok, client}
+      assert DynamoNode.Client.check_node_status(client, :b) == {:ok, client}
+      assert DynamoNode.Client.check_node_status(client, :c) == {:ok, client}
+      assert DynamoNode.Client.check_node_status(client, :d) == {:ok, client}
+      assert DynamoNode.Client.check_node_status(client, :e) == {:ok, client}
+      assert DynamoNode.Client.check_node_status(client, :f) == {:ok, client}
+
+       # Give things a bit of time to settle down.
+       receive do
+       after
+         7_000 -> :ok
+       end
+
+      assert DynamoNode.Client.put_request(client, "foo", 200, nil, :b) == {:ok, client}
+      assert DynamoNode.Client.put_request(client, "mah", 200, nil, :c) == {:ok, client}
+      assert DynamoNode.Client.put_request(client, "lsk", 100, nil, :c) == {:ok, client}
+      assert DynamoNode.Client.put_request(client, "hellowoorld", 200, nil, :c) == {:ok, client}
+      assert DynamoNode.Client.put_request(client, "distributed", 200, nil, :c) == {:ok, client}
+
+      #####
+      {:ok, {_, [200 | _tail ], [vhead | _vtail]}} = DynamoNode.Client.get_request(client, "foo", :c)
+      assert DynamoNode.Client.put_request(client, "foo", 10, vhead, :b) == {:ok, client}
+      {:ok, {_, [value | _ ], [vhead | vtail]}} = DynamoNode.Client.get_request(client, "foo", :c)
+      assert value = 10
+
+      #####
+      {:ok, {_, [200 | _tail ], [vhead | _vtail]}} = DynamoNode.Client.get_request(client, "distributed", :e)
+      assert DynamoNode.Client.put_request(client, "distributed", 93, vhead, :b) == {:ok, client}
+      {:ok, {_, [value | _ ], [vhead | vtail]}} = DynamoNode.Client.get_request(client, "distributed", :f)
+      assert value = 93
+
+      ####
+      {:ok, {_, [10 | _tail ], [vhead | _vtail]}} = DynamoNode.Client.get_request(client, "foo", :a)
+      assert DynamoNode.Client.put_request(client, "foo", 90, vhead, :e) == {:ok, client}
+      {:ok, {_, [value | _ ], [vhead | vtail]}} = DynamoNode.Client.get_request(client, "foo", :d)
+      assert value = 90
+      ######
+      {:ok, {_, [100 | _tail ], [vhead | _vtail]}} = DynamoNode.Client.get_request(client, "lsk", :f)
+      assert DynamoNode.Client.put_request(client, "lsk", 18, vhead, :f) == {:ok, client}
+      {:ok, {_, [value | _ ], [vhead | vtail]}} = DynamoNode.Client.get_request(client, "lsk", :a)
+      assert value == 18
+    end)
+
+    handle = Process.monitor(client)
+    # Timeout.
+    receive do
+      {:DOWN, ^handle, _, _, _} -> true
+    after
+      50_000 -> assert false
     end
 
   after

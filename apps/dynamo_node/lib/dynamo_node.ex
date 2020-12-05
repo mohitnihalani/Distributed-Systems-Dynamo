@@ -336,8 +336,9 @@ defmodule DynamoNode do
       {values, count} = Map.get(extra_state.get, client)
       extra_state = %{extra_state | get: Map.put(extra_state.get, client, {merge_conflicting_version(values,entry), count + 1})}
       if count + 1 >= node.r do
-        IO.puts("#{whoami} Quorum Level Reached, sending to client")
+        IO.puts("(#{whoami}) Quorum Level Reached, sending to client")
         IO.inspect(Map.get(extra_state.get, client))
+        IO.inspect(values)
         {merged_values, merged_context} = prepare_entry_for_client(values)
         send(client, {merged_values, merged_context})
         extra_state = %{extra_state | get: Map.delete(extra_state.get, client)}

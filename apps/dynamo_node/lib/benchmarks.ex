@@ -1,10 +1,12 @@
-"""
+
 defmodule DynamoNode.BenchMarks do
   import Emulation, only: [spawn: 2, send: 2, whoami: 0]
   import Kernel,
       except: [spawn: 3, spawn: 1, spawn_link: 1, spawn_link: 3, send: 2]
+  import Metrix
 
-    def run_put_benchmark() do
+
+  def run_put_benchmark() do
     Emulation.init()
     Emulation.append_fuzzers([Fuzzers.delay(1)])
     # mix run -e "DynamoNode.BenchMarks.run_put_benchmark()"
@@ -18,10 +20,10 @@ defmodule DynamoNode.BenchMarks do
     Enum.map(servers, fn pid -> spawn(pid, fn -> DynamoNode.lauch_node(DynamoNode.init(:seed_node, n, r, w)) end) end)
 
      # Give things a bit of time to settle down.
-     receive do
-     after
-       10_000 -> :ok
-     end
+    receive do
+    after
+      10_000 -> :ok
+    end
 
     client = spawn(:client, fn -> DynamoNode.Client.benchmark_client(DynamoNode.Client.new_client(:client)) end)
 
@@ -41,7 +43,7 @@ defmodule DynamoNode.BenchMarks do
         end
       end,
     },
-    time: 100,
+    time: 1000,
     print: [
       benchmarking: true,
       configuration: true,
@@ -50,8 +52,10 @@ defmodule DynamoNode.BenchMarks do
     inputs: %{"input 1" => :client},
     )
 
+    #measure "api.request", fn -> send(client, {:put, Enum.take_random(alphabet, length), 200, nil, Enum.random(servers)}) end
+
+
   after
     Emulation.terminate()
   end
 end
-"""
