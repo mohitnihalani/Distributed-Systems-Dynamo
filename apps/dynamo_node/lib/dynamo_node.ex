@@ -37,9 +37,11 @@ defmodule DynamoNode do
     heartbeat_timeout: 2000,
     probe_timer: nil,
     probe_timeout: 1000,
+    fail_timeout: 4000,
     probe_count: 5,
     ack_timer: nil,
     ack_timeout: 500,
+    suspect_nodes: Map.new(),
 
     # For Quorum
     n: 3, # (N,R,W) for quorum
@@ -116,6 +118,13 @@ defmodule DynamoNode do
     Ring.sync_rings(state, otherstate)
   end
 
+  """
+  Check if node is a suspect node
+  """
+  @spec is_suspect_node(map(), atom()) :: boolean()
+  def is_suspect_node(suspect_nodes, suspect_node) do
+    Map.has_key?(suspect_nodes, suspect_node)
+  end
 
   defp update_node_version(node, other_node, version) do
     %{node | state: Ring.update_node_incarnation(node.state, other_node, version)}
@@ -127,17 +136,40 @@ defmodule DynamoNode do
 
   @spec add_suspect_node(%DynamoNode{}, atom(), integer()) :: %DynamoNode{}
   defp add_suspect_node(node, suspect_node, incarnation) do
-    node = %{node | state: Ring.add_suspect_node(node.state, suspect_node, incarnation, now())}
-    spread_suspect_gossip(node, suspect_node)
-    node
+
+    is_suspect = is_suspect_node(node.suspect_nodes, suspect_node)
+    current_incarnation = Ring.get_node_incarnation(node.state, suspect_node)
+    if (is_suspect and  current_incarnation < incarnation) or !is_suspect do
+      IO.puts("(#{whoami()}) Marking (#{suspect_node}) as suspect" <>
+      " (#{current_incarnation}) <> (#{incarnation}) <> #{is_suspect}")
+      {ring, suspect_nodes} = Ring.add_suspect_node(node.state, node.suspect_nodes, suspect_node, max(current_incarnation,incarnation), now())
+      node = %{node | state: ring, suspect_nodes: suspect_nodes}
+      node = increment_vector_clock(node)
+      spread_suspect_gossip(node, suspect_node)
+      node
+    else
+      node
+    end
   end
 
+  @spec handle_node_alive(%DynamoNode{}, atom(), integer()) :: %DynamoNode{}
   defp handle_node_alive(node, suspect_node, incarnation) do
-    %{node | state: Ring.handle_node_alive(node.state, suspect_node, incarnation)}
+    node = %{node | state: Ring.handle_node_alive(node.state, suspect_node, incarnation)}
+    if is_suspect_node(node.suspect_nodes, suspect_node) do
+      %{node | suspect_nodes: Map.delete(node.suspect_nodes, suspect_node)}
+    else
+      node
+    end
   end
 
+  @spec handle_node_fail(%DynamoNode{}, atom()) :: %DynamoNode{}
   defp handle_node_fail(node, failed_node) do
-    %{node | state: Ring.remove_node(node.state, failed_node)}
+    node = %{node | state: Ring.remove_node(node.state, failed_node)}
+    if is_suspect_node(node.suspect_nodes, failed_node) do
+      %{node | suspect_nodes: Map.delete(node.suspect_nodes, failed_node)}
+    else
+      node
+    end
   end
 
   # Spread gossip about suspect node
@@ -158,10 +190,11 @@ defmodule DynamoNode do
 
   @spec check_and_remove_suspect(%DynamoNode{}, atom()) :: %DynamoNode{}
   defp check_and_remove_suspect(node, other_node) do
-    if Ring.is_suspect_node(node.state, other_node) do
+    if is_suspect_node(node.suspect_nodes, other_node) do
       incarnation = Ring.get_node_incarnation(node.state, other_node)
       node = handle_node_alive(node, other_node, incarnation)
       node_list = Enum.filter(node.state.nodes, fn x -> x != whoami() end)
+      node = increment_vector_clock(node)
       send_requests(node_list, DynamoNode.NodeAlive.new(other_node, incarnation))
       node
     else
@@ -169,20 +202,51 @@ defmodule DynamoNode do
     end
   end
 
+  # Function to check and flush out suspect nodes
+  # which have expired
+  @spec check_node_failures(%DynamoNode{}) :: %DynamoNode{}
+  defp check_node_failures(node) do
+    failed_nodes = Enum.reduce(node.suspect_nodes, [], fn {suspect, time}, acc ->
+      if now() - time > node.fail_timeout do
+        IO.puts("(#{whoami()}) is marking (#{suspect}) as Failed")
+        [suspect | acc]
+      else
+        acc
+      end
+    end)
+    remove_failed_nodes(node, failed_nodes)
+  end
+
+  @spec remove_failed_nodes(%DynamoNode{}, list(atom())) :: %DynamoNode{}
+  defp remove_failed_nodes(node, failed_nodes) do
+    case failed_nodes do
+      [head | tail] ->
+        node = handle_node_fail(node, head)
+        spread_node_failed(node, head)
+        remove_failed_nodes(node, tail)
+      [] ->
+        node
+    end
+  end
+
+
+
   # Starts Indirect Probe request for the node which didn't replied
   defp start_gossip_indirect_probe(node, extra_state, random_node) do
-    IO.puts("(#{whoami()}) Running Indirect Probe Request")
+    IO.puts("(#{whoami()}) Running Indirect Probe Request <> (#{random_node})")
 
     me = whoami()
+    node = check_node_failures(node)
     indirect_probe_list = Enum.filter(node.state.nodes, fn x -> x != whoami() end)
     indirect_probe_list = Enum.shuffle(indirect_probe_list) |> Enum.take(min(node.probe_count, Enum.count(indirect_probe_list)))
     send_requests(indirect_probe_list, DynamoNode.IndirectProbe.new(random_node, Ring.get_node_incarnation(node.state, random_node), me))
-
+    node = increment_vector_clock(node)
     node = start_probe_timer(node)
     receive do
 
       :timer ->
-        IO.puts("Indirect Probe Failed <> #{whoami()} marking #{random_node} as SUSPECT")
+        IO.puts("Indirect Probe Failed <> (#{whoami()}) marking (#{random_node}) as SUSPECT")
+        node = increment_vector_clock(node)
         node = add_suspect_node(node, random_node, -1)
         {node, extra_state}
 
@@ -192,6 +256,7 @@ defmodule DynamoNode do
         status: :alive,
         requestee: ^me
       }} ->
+        node = increment_vector_clock(node)
         Emulation.cancel_timer(node.probe_timer)
         node = update_node_version(node, random_node, incarnation)
         {node, extra_state}
@@ -202,6 +267,7 @@ defmodule DynamoNode do
   # Run Gossip Protocol
   def run_gossip_protocol(node, extra_state) do
 
+    node = check_node_failures(node)
     # Filter Current Node from the list
     node_list = Enum.filter(node.state.nodes, fn x -> x != whoami() end)
     if Enum.count(node_list) <= 0 do
@@ -217,17 +283,19 @@ defmodule DynamoNode do
           state: otherstate
         }} ->
 
+          node = increment_vector_clock(node)
           IO.puts("(#{whoami()}) Received Share State Response from (#{random_node})
           <> #{whoami()} has #{Ring.get_node_count(node.state)} and #{random_node} have #{Ring.get_node_count(otherstate)}")
           Emulation.cancel_timer(node.ack_timer)
           node = %{node | state: join_states(node.state, otherstate)}
-          #node = check_and_remove_suspect(node, random_node)
+          node = check_and_remove_suspect(node, random_node)
           node = reset_gossip_timeout(node)
           run_node(node, extra_state)
 
         :timer ->
+          node = increment_vector_clock(node)
           IO.puts("(#{whoami()}) Gossip Protocol Request Timeout #{random_node}")
-          #{node, extra_state} = start_gossip_indirect_probe(node, extra_state, random_node)
+          {node, extra_state} = start_gossip_indirect_probe(node, extra_state, random_node)
           node = reset_gossip_timeout(node)
           run_node(node, extra_state)
       end
@@ -249,7 +317,7 @@ defmodule DynamoNode do
       # Check If "W" acknowledgement is received
       extra_state = %{extra_state | put: Map.put(extra_state.put, client, Map.get(extra_state.put, client, 0) + 1)}
       if Map.get(extra_state.put, client, 0) >= node.w do
-        IO.puts("(#{whoami()}) Have enough confirmations for get request #{Map.fetch!(extra_state.put, client)} #{node.w} #{node.n} #{node.r}")
+        IO.puts("(#{whoami()}) Have enough confirmations for Put request #{Map.get(extra_state.put, client)} #{node.w} #{node.n} #{node.r}")
         send(client, :ok)
         extra_state = %{extra_state | put: Map.delete(extra_state.put, client)}
         {node, extra_state}
@@ -429,7 +497,7 @@ defmodule DynamoNode do
           run_node(node, extra_state)
         end
 
-      #---------------------------  Gossip Protocol Request ------------------------------------------- #
+       #---------------------------  Gossip Protocol Request ------------------------------------------- #
       # Share State Request For Gossip Protocol
       {sender, %DynamoNode.ShareStateRequest{state: otherstate}} ->
         IO.puts("#{whoami()} (#{Ring.get_node_count(node.state)}) Received Share State request from #{sender} (#{Ring.get_node_count(otherstate)})")
@@ -437,6 +505,11 @@ defmodule DynamoNode do
         node = %{node | state: handle_share_state_request(node.state, {sender, otherstate})}
         run_node(node, extra_state)
         # code
+
+      {sender, %DynamoNode.ShareStateResponse{
+          state: otherstate
+      }} ->
+        run_node(node, extra_state)
 
       {sender, %DynamoNode.IndirectProbe{node: other_node, incarnation: other_incarnation, requestee: requestee} = probe_request} ->
         IO.puts("(#{whoami()}) received Indirect probing request for (#{other_node}) from (#{sender})")
@@ -470,6 +543,8 @@ defmodule DynamoNode do
           node = add_suspect_node(node, suspect_node, other_incarnation)
           run_node(node, extra_state)
         else
+          IO.puts("(#{whoami()}) Sending Node Alive Response for (#{suspect_node}) to (#{sender})" <>
+          "(#{Ring.get_node_incarnation(node.state, suspect_node)}) <> (#{other_incarnation})")
           send(sender, DynamoNode.NodeAlive.new(suspect_node, Ring.get_node_incarnation(node.state, suspect_node)))
           run_node(node, extra_state)
         end
@@ -488,7 +563,9 @@ defmodule DynamoNode do
       # Handle Failed Node
       {sender, %DynamoNode.NodeFailed{node: failed_node}} ->
         IO.puts("(#{whoami()}) received Node Failed request for (#{failed_node}) from (#{sender})")
-        run_node(handle_node_fail(node, failed_node), extra_state)
+        if failed_node != whoami() do
+          run_node(handle_node_fail(node, failed_node), extra_state)
+        end
 
       # ---------------  Handle Get Request -----------------------------#
       {sender, %DynamoNode.GetEntry{key: key, client: client}} ->
@@ -575,7 +652,6 @@ defmodule DynamoNode do
 
       # --------------- Testing ---------------------------------------- #
       {sender, :check} ->
-
         #IO.puts(sender)
         send(sender, :ok)
         run_node(node, extra_state)
@@ -583,6 +659,16 @@ defmodule DynamoNode do
       {sender, :get_state} ->
         send(sender, node.state)
         run_node(node, extra_state)
+
+      {sender, {:temp_fail, timeout}} ->
+        receive do
+        after
+          timeout ->
+            run_node(node, extra_state)
+        end
+
+      {sender, :fail} ->
+        send(sender, :ok)
     end
 
   end
@@ -645,8 +731,8 @@ defmodule DynamoNode.Client do
     IO.puts(key)
     send(node, {:put, {key, value, context}})
     receive do
-      {_sender, :ok} ->
-        {:ok, client}
+      {sender, :ok} ->
+        {:ok, client, sender}
     after
       5000 -> {:fail,client}
     end
@@ -662,6 +748,23 @@ defmodule DynamoNode.Client do
 
     after
       5000 -> {:fail,client}
+    end
+  end
+
+  def temp_fail_node(client, node) do
+    IO.puts("Client Temp Failing Node (#{node})")
+    send(node, {:temp_fail, 10000})
+    client
+  end
+
+  @spec fail_node(%Client{}, atom() | pid) :: {:ok | :fail, %Client{}}
+  def fail_node(client, node) do
+    IO.puts("Client Failing Node (#{node})")
+    send(node, :fail)
+    receive do
+      {^node, :ok} -> {:ok, client}
+    after
+      1000 -> {:fail,client}
     end
   end
 end
