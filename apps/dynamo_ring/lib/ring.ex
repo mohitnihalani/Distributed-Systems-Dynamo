@@ -119,16 +119,11 @@ defmodule Ring do
   end
 
   def get_node_incarnation(ring, node) do
-    # First Check if contains node, if not send -1
-    #TODO
-    # Return node_incarnation for indirect probe
     get_node_version(ring, node)
   end
 
   @spec update_node_version(%Ring{}, atom(), integer()) :: %Ring{}
   def update_node_version(%Ring{vector_clock: version} = ring, proc, incarnation) do
-    #TODO
-    # Call vector clock to update version for this node
     %{ring | vector_clock: VectorClock.update_vector_clock(proc,version, incarnation)}
   end
 

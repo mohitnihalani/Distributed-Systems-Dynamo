@@ -183,8 +183,6 @@ defmodule DynamoNode do
 
       :timer ->
         IO.puts("Indirect Probe Failed <> #{whoami()} marking #{random_node} as SUSPECT")
-        #TODO Handle node suspect
-        # 1. Add node to suspect node
         node = add_suspect_node(node, random_node, -1)
         {node, extra_state}
 
@@ -264,31 +262,6 @@ defmodule DynamoNode do
     end
   end
 
-
-  """
-  comparison = VectorClock.compare_vectors(v.context, entry.context)
-          if v.value == entry.value do
-            case comparison do
-              :before ->
-                {acc, [:before | acc1]}
-              :after ->
-                {[v | acc], [:after]}
-              _ ->
-                {[v | acc], [:concurrent]}
-            end
-          else
-            case compar do
-              :before ->
-                {acc, [:before | acc1]}
-              :after or :concurrent ->
-                {[v | acc], [:after]}
-              :conflict->
-                {[v | acc], [:conflict]}
-            end
-          end
-
-  """
-
   @spec merge_conflicting_version(list(%DynamoNode.Entry{}) | list(), %DynamoNode.Entry{}) :: list(%DynamoNode.Entry{})
   def merge_conflicting_version(versions, entry) do
     if Enum.count(versions) == 0 do
@@ -337,8 +310,6 @@ defmodule DynamoNode do
       extra_state = %{extra_state | get: Map.put(extra_state.get, client, {merge_conflicting_version(values,entry), count + 1})}
       if count + 1 >= node.r do
         IO.puts("(#{whoami}) Quorum Level Reached, sending to client")
-        IO.inspect(Map.get(extra_state.get, client))
-        IO.inspect(values)
         {merged_values, merged_context} = prepare_entry_for_client(values)
         send(client, {merged_values, merged_context})
         extra_state = %{extra_state | get: Map.delete(extra_state.get, client)}
@@ -353,7 +324,6 @@ defmodule DynamoNode do
 
   @spec add_entry_to_db(%DynamoNode{}, any(), map(), any()) :: %DynamoNode{}
   def add_entry_to_db(node, key, context, value) do
-    #TODO Add vector clocks to add the version
     version = Ring.get_node_version(node.state, whoami())
     %{node | kv: DynamoNode.KV.put(node.kv, whoami(), version, key, context, value)}
   end
@@ -366,6 +336,7 @@ defmodule DynamoNode do
   """
   Method to handle put request
   """
+  @spec handle_put_request(%DynamoNode{}, any(), atom(), any(), any(), map()) :: {%DynamoNode{}, any()}
   defp handle_put_request(node, extra_state, client, key, value, context) do
     # Get the preferred list
     preference_list = get_preference_list(node.state, key, node.n)
@@ -483,9 +454,11 @@ defmodule DynamoNode do
         case requestee do
           ^me ->
             #TODO IF in suspect list mark as alive else don't do anythind
+            node =  check_and_remove_suspect(node, other_node)
             run_node(node, extra_state)
 
           _ ->
+            node = handle_node_alive(node, other_node, other_incarnation)
             send(requestee, probe_response)
             run_node(node, extra_state)
         end
